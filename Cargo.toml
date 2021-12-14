@@ -1,0 +1,19 @@
+[package]
+name = "elm_ecs"
+version = "0.0.1"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+luminance = {version = "0.45",features = ["derive"]}
+luminance-glutin = "0.13"
+glutin = { version = "0.27", default-features = false }
+gl = "0.14"
+luminance-gl = { version = "0.18" }
+
+
+[[bin]]
+name = "test"
+test = false
+bench = false
