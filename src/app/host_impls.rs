@@ -1,7 +1,3 @@
-use std::any::Any;
-use std::collections::BTreeMap;
-use crate::traits::Host;
-
 pub mod default {
     use crate::traits::{AllocError, Hosts, System};
     use std::any::{Any, TypeId};

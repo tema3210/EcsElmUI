@@ -62,6 +62,7 @@ pub struct Viewport {
 }
 
 impl Viewport {
+    /// width to height ratio
     fn ratio(&self) -> f32 {
         self.width as f32 / self.height as f32
     }

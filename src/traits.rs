@@ -1,7 +1,4 @@
-use render::Renderer;
 use std::future::Future;
-use std::any::Any;
-use std::ops::IndexMut;
 
 pub mod render;
 
