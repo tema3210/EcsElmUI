@@ -5,34 +5,29 @@ pub mod default {
     use crate::traits::Context;
 
     pub struct Host {
-        last_id: u64,
-        map: BTreeMap<TypeId,BTreeMap<<Self as crate::traits::Host>::Indice,Box<dyn Any>>>,
+        last_id: bitmaps::Bitmap<1024>,
+        data: BTreeMap<TypeId,BTreeMap<<Self as crate::traits::Host>::Indice,Box<dyn Any>>>,
         states: BTreeMap<TypeId,Box<dyn Any>>,
     }
 
     impl crate::traits::Host for Host {
-        type Indice = u64;
+        type Indice = usize;
 
         fn allocate_entity(&mut self) -> Result<Self::Indice, AllocError> {
-            let ret = self.last_id;
-            if ret == u64::MAX {
-                Err(crate::traits::AllocError)
-            } else {
-                self.last_id += 1;
-                Ok(ret)
-            }
+            self.last_id.first_index().map(|idx| {self.last_id.set(idx,false); idx}).ok_or(AllocError)
         }
 
         fn drop_entity(&mut self, which: Self::Indice) {
-            for (_,m) in self.map.iter_mut() {
+            for (_,m) in self.data.iter_mut() {
                 m.remove(&which);
-            }
+            };
+            self.last_id.set(which,true);
         }
     }
 
     impl<'h,S: crate::traits::System<'h,Self>> Hosts<'h,S> for Host {
         fn reduce<'s, 'd>(&'h mut self, which: Self::Indice, with: &'d mut impl Iterator<Item=<S as System<'h, Self>>::Message>, ctx: &'s mut impl Context<'h, Self>) -> Result<(),crate::traits::NoSuchIndice> where 's: 'd, 'h: 's {
-            let (map,states) = (&mut self.map,&mut self.states);
+            let (map,states) = (&mut self.data, &mut self.states);
             let state: Option<&mut S> = map
                 .get_mut(&(std::any::TypeId::of::<S>()))
                 .map(|m| m.get_mut(&which)).flatten()
@@ -50,14 +45,14 @@ pub mod default {
         }
 
         fn get_state(&mut self, which: Self::Indice) -> Option<&mut S> {
-            self.map
+            self.data
                 .get_mut(&(std::any::TypeId::of::<S>()))
                 .map(|m| m.get_mut(&which)).flatten()
                 .map(|a| a.downcast_mut::<S>()).flatten()
         }
 
         fn subscribe(&mut self, who: Self::Indice, with: <S as System<'h, Self>>::Props) {
-            self.map.entry(TypeId::of::<S>())
+            self.data.entry(TypeId::of::<S>())
                 .and_modify(|a| {
                     a.entry(who).and_modify(|a|{
                         (*a).downcast_mut::<S>().map(|it| S::changed(Some(it),&with));
@@ -71,7 +66,7 @@ pub mod default {
         }
 
         fn unsubscribe(&mut self, who: Self::Indice) {
-            self.map.entry(TypeId::of::<S>())
+            self.data.entry(TypeId::of::<S>())
                 .and_modify(|m| {m.remove(&who);});
         }
     }

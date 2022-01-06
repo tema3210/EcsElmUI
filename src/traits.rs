@@ -4,6 +4,7 @@ pub mod render;
 
 pub struct AllocError;
 pub struct NoSuchIndice;
+pub struct InternalError;
 
 pub trait Host {
     type Indice;
