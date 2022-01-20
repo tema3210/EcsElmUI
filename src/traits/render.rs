@@ -22,7 +22,7 @@ pub struct RGBAColor(u8,u8,u8,u8);
 
 /// An abstract, dependent color
 #[derive(Clone,Copy)]
-pub enum Color{
+pub enum Color {
     Plain(RGBAColor),
     Functional(fn(Point)->RGBAColor)
 }

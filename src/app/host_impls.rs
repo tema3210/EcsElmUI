@@ -3,11 +3,22 @@ pub mod default {
     use std::any::{Any, TypeId};
     use std::collections::BTreeMap;
     use crate::traits::Context;
+    use traits::{NoSuchIndice, GlobalState};
 
     pub struct Host {
+        /// free ids
         last_id: bitmaps::Bitmap<1024>,
-        data: BTreeMap<TypeId,BTreeMap<<Self as crate::traits::Host>::Indice,Box<dyn Any>>>,
-        states: BTreeMap<TypeId,Box<dyn Any>>,
+        /// a map from Systems to their subscribers and global states.
+        data: BTreeMap<TypeId,(BTreeMap<Self::Indice,Box<dyn Any>>, Box<dyn Any>)>,
+    }
+
+    impl Host {
+        pub fn new() -> Self {
+            Self {
+                last_id: bitmaps::Bitmap::new(),
+                data: BTreeMap::new(),
+            }
+        }
     }
 
     impl crate::traits::Host for Host {
@@ -27,21 +38,18 @@ pub mod default {
 
     impl<'h,S: crate::traits::System<'h,Self>> Hosts<'h,S> for Host {
         fn reduce<'s, 'd>(&'h mut self, which: Self::Indice, with: &'d mut impl Iterator<Item=<S as System<'h, Self>>::Message>, ctx: &'s mut impl Context<'h, Self>) -> Result<(),crate::traits::NoSuchIndice> where 's: 'd, 'h: 's {
-            let (map,states) = (&mut self.data, &mut self.states);
-            let state: Option<&mut S> = map
-                .get_mut(&(std::any::TypeId::of::<S>()))
-                .map(|m| m.get_mut(&which)).flatten()
-                .map(|a| a.downcast_mut::<S>()).flatten();
-            let gs = states.get_mut(&TypeId::of::<S>()).map(|i| i.downcast_mut::<S::State>()).flatten();
-            match (state,gs) {
-                (Some(state),Some(global_state)) => {
-                    with.for_each(move |msg| state.update(global_state,msg,ctx));
-                    Ok(())
-                },
-                _ => {
-                    Err(crate::traits::NoSuchIndice)
-                },
-            }
+            self.data
+                .get_mut(&std::any::TypeId::of::<S>())
+                .map(|(map,gs)| (map.get_mut(&which).map(|d| d.downcast_mut::<S>()).flatten(),gs.downcast_mut::<S::State>()))
+                .map(|arg| {
+                    for msg in with {
+                        match arg {
+                            (Some(mut data),Some(state)) => S::update(&mut data,state,msg,ctx),
+                            _ => {}
+                        }
+                    };
+                })
+                .ok_or(NoSuchIndice)
         }
 
         fn get_state(&mut self, which: Self::Indice) -> Option<&mut S> {
@@ -61,7 +69,7 @@ pub mod default {
                 .or_insert_with(|| {
                     let mut map =  BTreeMap::new();
                     map.insert(who, Box::new(S::changed(None,&with)) as Box<dyn Any>);
-                    map
+                    (map,Box::new(S::State::init()) as Box<dyn Any>)
                 });
         }
 

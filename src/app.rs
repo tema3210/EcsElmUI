@@ -1,21 +1,21 @@
 pub use crate::traits::render::Viewport;
 use luminance_glutin::GlutinSurface;
 use glutin::event_loop::{EventLoop, ControlFlow};
-use glutin::event::Event;
+use glutin::event::{Event, WindowEvent, StartCause};
 use std::collections::{BTreeMap, HashMap};
 use std::ops::Add;
 
-
-
 pub mod host_impls;
+use app::host_impls::default::Host;
 
 pub struct Application {
     vp: Viewport,
+    host: host_impls::default::Host,
 }
 
 impl Application {
     pub fn new(vp: Viewport) -> Self {
-        Self{ vp }
+        Self{ vp, host: Host::new() }
     }
 
     pub fn run(&mut self) {
@@ -41,7 +41,7 @@ impl Application {
             use std::cmp::Ordering;
 
             #[derive(PartialEq,Debug)]
-            pub enum Ev{
+            pub enum Ev {
                 ScaleFactorChanged{scale_factor: f64,physical_size: winit::dpi::PhysicalSize<u32>},
                 Other(Event<'static,()>),
             }
@@ -117,10 +117,14 @@ impl Application {
 
             match ev {
                 Event::NewEvents(resume_reason) => {
-
-                }
+                    match resume_reason {
+                        StartCause::ResumeTimeReached { .. } => {}
+                        StartCause::WaitCancelled { .. } => {}
+                        StartCause::Poll => {}
+                        StartCause::Init => {}
+                    }
+                },
                 Event::WindowEvent { window_id,event } => {
-                    use winit::event::WindowEvent;
                     match event {
                         WindowEvent::Resized(_) => {}
                         WindowEvent::Moved(_) => {}

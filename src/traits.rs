@@ -40,7 +40,7 @@ pub trait System<'h,H: Host + Hosts<'h,Self> + ?Sized + 'h>: 'static {
     type Props;
 
     fn changed<'s>(this: Option<&'s mut Self>,props: &Self::Props)->Self;
-    fn update<'s>(&'s mut self,gs: &mut Self::State,msg: Self::Message, ctx: &mut impl Context<'h,H>) where 'h: 's;
+    fn update<'s>(&'s mut self,state: &mut Self::State,msg: Self::Message, ctx: &mut impl Context<'h,H>) where 'h: 's;
     fn view<'v>(&'v self) -> Box<dyn render::Renderer<H> + 'v>;
 }
 
