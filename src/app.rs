@@ -6,7 +6,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::ops::Add;
 
 pub mod host_impls;
-use app::host_impls::default::Host;
+use host_impls::default::Host;
 
 pub struct Application {
     vp: Viewport,
@@ -160,6 +160,7 @@ impl Application {
                 Event::Suspended => {
                     *flag = ControlFlow::Wait
                 }
+
                 Event::Resumed => {
                     *flag = ControlFlow::WaitUntil(std::time::Instant::now().add(std::time::Duration::from_millis(15)))
                 }

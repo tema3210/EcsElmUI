@@ -30,7 +30,7 @@ pub enum Color {
 pub trait Painter {
     fn texturize<'t>(&'t mut self, text: Texture<'t>);
     fn line(&mut self, point1: Point,point2: Point, color: Color);
-    fn bezier_curve(&mut self, points: Vec<Point>, color: Color);
+    fn bezier_curve(&mut self, points: &[Point], color: Color);
 
     fn text<'s,'c: 's>(&'c mut self,text: &'s str, font: &'c Font, color: Color, at: Point);
     fn rectangle(&mut self,left_upper: Point,right_lower: Point, fill: Color);
