@@ -212,14 +212,15 @@ pub trait StyleTable {
 
 pub trait Renderer<H: Host>{
     /// Here we tell how much space we want to take from initial VP.
-    /// This gets called again if carving failed.
-    /// Returning `None` means that system doesn't need screen space.
-    fn carve(&mut self, vp: Viewport) -> Option<CarveCommand>;
+    /// We get a response whether we can have enough screen space:
+    /// If yes, then this returns `Some(viewport)`, `None` otherwise.
+    fn carve(&mut self, part: CarveCommand) -> Option<Viewport>;
     /// Here we create a data layout for it.
-    fn layout(&mut self, vp: Viewport) -> Layout;
+    /// It checks if the layout returned here fits `Viewport` returned in `Renderer::carve`
+    fn layout(&mut self, layout: Layout);
     /// Here we can modify styling.
-    fn style(&mut self,table: &dyn StyleTable) -> Vec<StyleCommand>;
+    fn style(&mut self,commands: &[StyleCommand]);
     /// Here we fill data into our layout.
-    /// This gets called for all sub layouts defined via `Renderer::layout`
-    fn fill(&mut self,layout: &Layout) -> FillCommand<H>;
+    /// The layout of our system and all of its children are identified by their start coordinates
+    fn fill(&mut self,layout: &[((u32,u32),FillCommand<H>)]);
 }

@@ -2,14 +2,13 @@ use std::future::Future;
 
 pub mod render;
 
-pub struct AllocError;
-pub struct NoSuchIndice;
+// pub struct NoSuchIndice;
 pub struct InternalError;
 
 pub trait Host {
     type Indice;
 
-    fn allocate_entity(&mut self) -> Result<Self::Indice,AllocError>;
+    fn allocate_entity(&mut self) -> Result<Self::Indice,crate::errors::traits::AllocError>;
     fn drop_entity(&mut self,which: Self::Indice);
 
     // fn subscribers<'h,S>(&'h self) -> Box<dyn Iterator<Item=Self::Indice>> where Self: Hosts<'h,S>;
@@ -41,15 +40,15 @@ pub trait System<'h,H: Host + Hosts<'h,Self> + ?Sized + 'h>: 'static {
 
     fn changed<'s>(this: Option<&'s mut Self>,props: &Self::Props)->Self;
     fn update<'s>(&'s mut self,state: &mut Self::State,msg: Self::Message, ctx: &mut impl Context<'h,H>) where 'h: 's;
-    fn view<'v>(&'v self) -> Box<dyn render::Renderer<H> + 'v>;
+    fn view<'v>(&'v self,renderer: &'v mut dyn render::Renderer<H>,vp: render::Viewport) -> fn();
 }
 
 
 pub trait Context<'s,H: Host + ?Sized + 's> {
-    fn get_host(&mut self) -> &'s mut H;
+    fn get_host(&mut self) -> &mut H;
     fn send<S: System<'s,H>>(&mut self,msg: S::Message,whom: H::Indice) where H: Hosts<'s,S>;
 
     fn spawn<T: 'static,F,Fut,S: System<'s,H>>(&mut self,fut: Fut, f: F)
-        where Fut: Future<Output = T>, F: Fn(T) -> S::Message + 'static, H: Hosts<'s,S>;
-    fn state<S: System<'s,H>>(&self) -> &'s mut S::State where H: Hosts<'s,S>;
+        where Fut: Future<Output = T> + 'static, F: Fn(T) -> S::Message + 'static, H: Hosts<'s,S>;
+    fn state<S: System<'s,H>>(&'s mut self) -> &'s mut S::State where H: Hosts<'s,S>;
 }

@@ -3,4 +3,5 @@ extern crate glutin;
 
 pub mod traits;
 pub mod app;
-mod render;
+pub mod errors;
+pub(crate) mod render;

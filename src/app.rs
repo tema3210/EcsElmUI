@@ -6,7 +6,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::ops::Add;
 
 pub mod host_impls;
-use app::host_impls::default::Host;
+use crate::app::host_impls::default::Host;
 
 pub struct Application {
     vp: Viewport,
