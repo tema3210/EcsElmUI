@@ -15,7 +15,7 @@ pub trait Host {
 }
 
 pub trait Hosts<'h,S: System<'h,Self> + ?Sized + 'static>: Host + 'h {
-    fn reduce<'s,'d>(&'h mut self, which: Self::Indice,with: &'d mut impl Iterator<Item=S::Message>,ctx: &'s mut impl Context<'h,Self>) -> Result<(),NoSuchIndice> where 's: 'd,'h: 's;
+    fn reduce<'s,'d>(&'h mut self, which: Self::Indice) -> Result<(),NoSuchIndice> where 's: 'd,'h: 's;
 
     fn get_state(&mut self,which: Self::Indice) -> Option<&mut S>;
 
@@ -48,7 +48,7 @@ pub trait Context<'s,H: Host + ?Sized + 's> {
     fn get_host(&mut self) -> &mut H;
     fn send<S: System<'s,H>>(&mut self,msg: S::Message,whom: H::Indice) where H: Hosts<'s,S>;
 
-    fn spawn<T: 'static,F,Fut,S: System<'s,H>>(&mut self,fut: Fut, f: F)
+    fn spawn<T: 'static,F,Fut,S: System<'s,H>>(&mut self,fut: Fut, f: F,whom: H::Indice)
         where Fut: Future<Output = T> + 'static, F: Fn(T) -> S::Message + 'static, H: Hosts<'s,S>;
     fn state<S: System<'s,H>>(&'s mut self) -> &'s mut S::State where H: Hosts<'s,S>;
 }
