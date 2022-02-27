@@ -12,16 +12,18 @@ pub mod default {
         last_id: bitmaps::Bitmap<1024>,
         /// a map from Systems to their (subscribers, states) and global states.
         data: typemap::SendMap,
+        /// a function for dropping an entity.
+        drop_ent:  fn(&mut Self,usize),
     }
 
-    pub struct SystemData<S: System<Host>> {
+    pub struct SystemData<'h,S: System<'h,Host>> {
         state: S::State,
         messages: Vec<(usize,Option<S::Message>)>,
-        data: BTreeMap<usize,S>
+        data: BTreeMap<usize,S>,
     }
 
-    impl<S: System<Host> + Any> typemap::Key for S {
-        type Value = SystemData<S>;
+    impl<'a,S: System<'a,Host> + Any> typemap::Key for S {
+        type Value = SystemData<'a,S>;
     }
 
     impl Host {
@@ -29,7 +31,12 @@ pub mod default {
             Self {
                 last_id: bitmaps::Bitmap::new(),
                 data: typemap::SendMap::new(),
+                drop_ent: |_,_| {},
             }
+        }
+
+        pub(crate) fn system_data<S>(&mut self) -> &mut SystemData<S>{
+            self.data.entry::<S>().or_insert(SystemData{state: S::State::init(self), ..Default::default()})
         }
     }
 
@@ -41,19 +48,27 @@ pub mod default {
         }
 
         fn drop_entity(&mut self, which: Self::Indice) {
-            unimplemented!()
+            self.drop_ent(self,which);
+        }
+
+        fn register_entity_component_drop(&mut self, func: fn(&mut Self, Self::Indice)) {
+            self.drop_ent = |s,ind| {
+                self.drop_ent(ind);
+                func(s,ind);
+            }
         }
     }
 
-    impl<'h,S: crate::traits::System<'h,Self>> Hosts<'h,S> for Host {
-
-        fn reduce<'s, 'd>(&'h mut self, which: Self::Indice) -> Result<(),NoSuchIndice> where 's: 'd, 'h: 's {
-            let system: &mut SystemData<S>= self.data.entry::<S>().or_insert(SystemData{state: S::State::init(), ..Default::default()});
-            if let Some(s) = system.data.get_mut(&which) {
+    impl<'h,S: crate::traits::System<'h,Self>> Hosts<'h,S> for Host
+        where Self: 'h,
+    {
+        fn reduce<'s, 'd>(&'h mut self, which: Self::Indice) -> Result<(),crate::errors::traits::ReduceError> where 's: 'd, 'h: 's {
+            let system = self.system_data::<S>();
+            if let Some(state) = system.data.get_mut(&which) {
                 system.messages.iter_mut()
                     .filter(|(el,_)| el == which)
                     .map(|(_,el)| el)
-                    .fold(s,|st,msg| {state.update(msg.take().except("found empty message")); state});
+                    .fold(state,|st,msg| {st.update(msg.take().except("found empty message")); state});
                 Ok(())
             } else {
                 Err(NoSuchIndice)
@@ -62,12 +77,12 @@ pub mod default {
         }
 
         fn get_state(&mut self, which: Self::Indice) -> Option<&mut S> {
-            self.data.entry::<S>().or_insert(SystemData{state: S::State::init(), ..Default::default()})
+            self.system_data::<S>()
                 .data.get_mut(&which)
         }
 
         fn subscribe(&mut self, who: Self::Indice, with: <S as System<'h, Self>>::Props) {
-            let entry: &mut SystemData<S> = self.data.entry::<S>().or_insert(SystemData{state: S::State::init(), ..Default::default()});
+            let entry = self.system_data::<S>();
             entry.data.entry(who)
                 .and_modify(|old| S::changed(Some(old),&with))
                 .or_insert(S::changed(None,&with));
@@ -98,7 +113,7 @@ pub mod default {
         }
 
         fn send<S: System<'h, Host>>(&mut self, msg: <S as System<'h, Host>>::Message, whom: usize) where Host: Hosts<'h, S> {
-            unimplemented!()
+            self.host.system_data::<S>().messages.push((whom,Some(msg)))
         }
 
         fn spawn<T: 'static, F, Fut, S: System<'h, Host>>(&mut self, fut: Fut, f: F,whom: usize) where Fut: Future<Output=T> + 'static, F: Fn(T) -> S::Message + 'static, Host: Hosts<'h, S> {
@@ -106,7 +121,7 @@ pub mod default {
         }
 
         fn state<S: System<'h, Host>>(&'h mut self) -> &'h mut <S as System<'h, Host>>::State where Host: Hosts<'h, S> {
-            unimplemented!()
+            &mut self.host.system_data::<S>().state
         }
     }
 }
