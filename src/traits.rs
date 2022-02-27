@@ -2,7 +2,6 @@ use std::future::Future;
 
 pub mod render;
 
-// pub struct NoSuchIndice;
 pub struct InternalError;
 
 pub trait Host {
@@ -10,12 +9,12 @@ pub trait Host {
 
     fn allocate_entity(&mut self) -> Result<Self::Indice,crate::errors::traits::AllocError>;
     fn drop_entity(&mut self,which: Self::Indice);
-
-    // fn subscribers<'h,S>(&'h self) -> Box<dyn Iterator<Item=Self::Indice>> where Self: Hosts<'h,S>;
+    fn register_entity_component_drop(&mut self,func: fn(&mut Self,Self::Indice));
 }
 
 pub trait Hosts<'h,S: System<'h,Self> + ?Sized + 'static>: Host + 'h {
-    fn reduce<'s,'d>(&'h mut self, which: Self::Indice) -> Result<(),NoSuchIndice> where 's: 'd,'h: 's;
+
+    fn reduce<'s,'d>(&'h mut self, which: Self::Indice) -> Result<(),crate::errors::traits::ReduceError> where 's: 'd,'h: 's;
 
     fn get_state(&mut self,which: Self::Indice) -> Option<&mut S>;
 
@@ -23,8 +22,10 @@ pub trait Hosts<'h,S: System<'h,Self> + ?Sized + 'static>: Host + 'h {
     fn unsubscribe(&mut self, who: Self::Indice);
 }
 
-pub trait GlobalState: Sized {
-    fn init() -> Self;
+pub trait GlobalState<H: Host>: Sized + 'static {
+    //this should do two things: register a dropping routine for a component; initialize a global system's state
+    fn init(host: &mut H) -> Self;
+    // reduce the global state of the system.
     fn update(&mut self, f: impl FnOnce(Self)->Self);
 }
 
@@ -33,7 +34,7 @@ pub trait System<'h,H: Host + Hosts<'h,Self> + ?Sized + 'h>: 'static {
     type Message: 'static;
 
     /// Some global state of a system
-    type State: GlobalState + 'static;
+    type State: GlobalState<H> + 'static;
 
     /// Properties for component initialization
     type Props;
