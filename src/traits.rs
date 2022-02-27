@@ -50,6 +50,6 @@ pub trait Context<'s,H: Host + ?Sized + 's> {
     fn send<S: System<'s,H>>(&mut self,msg: S::Message,whom: H::Indice) where H: Hosts<'s,S>;
 
     fn spawn<T: 'static,F,Fut,S: System<'s,H>>(&mut self,fut: Fut, f: F,whom: H::Indice)
-        where Fut: Future<Output = T> + 'static, F: Fn(T) -> S::Message + 'static, H: Hosts<'s,S>;
+        where Fut: Future<Output = T> + Send + 'static , F: Fn(T) -> S::Message + 'static, H: Hosts<'s,S>;
     fn state<S: System<'s,H>>(&'s mut self) -> &'s mut S::State where H: Hosts<'s,S>;
 }

@@ -15,6 +15,7 @@ winit = "*"
 bitmaps = "3.1.0"
 cfg-if = "1"
 typemap ="0.3.3"
+futures = {version = "0.3", features = ["executor","thread-pool"]}
 
 
 [[bin]]

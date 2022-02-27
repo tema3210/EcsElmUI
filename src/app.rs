@@ -6,7 +6,6 @@ use std::collections::{BTreeMap, HashMap};
 use std::ops::Add;
 
 pub mod host_impls;
-use host_impls::default::Host;
 
 pub struct Application {
     vp: Viewport,
@@ -15,7 +14,7 @@ pub struct Application {
 
 impl Application {
     pub fn new(vp: Viewport) -> Self {
-        Self{ vp, host: Host::new() }
+        Self{ vp, host: host_impls::default::Host::new() }
     }
 
     pub fn run(&mut self) {
@@ -31,7 +30,6 @@ impl Application {
     }
 
     fn main_loop(&mut self,mut surface: GlutinSurface,ctx: EventLoop<()> ) -> ! {
-
         mod ev {
             use glutin::event::Event::WindowEvent;
             use glutin::event;
@@ -51,7 +49,7 @@ impl Application {
             impl<'a> From<&'a Event<'a,()>> for Ev {
                 fn from(r: &'a Event<'a, ()>) -> Self {
                     match r {
-                        x @ Event::WindowEvent{event: _ev @  event::WindowEvent::ScaleFactorChanged{scale_factor, new_inner_size} ,window_id: _} => {
+                        Event::WindowEvent{event: _ev @  event::WindowEvent::ScaleFactorChanged{scale_factor, new_inner_size} ,window_id: _} => {
                             Self::ScaleFactorChanged {scale_factor: *scale_factor,physical_size: **new_inner_size}
                         },
                         r => unsafe {

@@ -5,6 +5,8 @@ pub mod default {
     use crate::traits::{Context, GlobalState};
     use std::future::Future;
     use crate::errors::traits::{AllocError,ReduceError::NoSuchIndice};
+    use futures::task::SpawnExt;
+    use futures::FutureExt;
 
 
     pub struct Host {
@@ -14,24 +16,32 @@ pub mod default {
         data: typemap::SendMap,
         /// a function for dropping an entity.
         drop_ent:  fn(&mut Self,usize),
+        ///a futures runtime.
+        runtime: futures::executor::ThreadPool,
     }
 
     pub struct SystemData<'h,S: System<'h,Host>> {
         state: S::State,
         messages: Vec<(usize,Option<S::Message>)>,
         data: BTreeMap<usize,S>,
+        //TODO: get rid of boxing somehow
+        future_handles: Vec<(usize,Box<dyn Future<Output = S::Message>>)>,
     }
 
-    impl<'a,S: System<'a,Host> + Any> typemap::Key for S {
-        type Value = SystemData<'a,S>;
+    impl<'h,S: System<'h,Host> + Any> typemap::Key for S {
+        type Value = SystemData<'h,S>;
     }
 
     impl Host {
         pub fn new() -> Self {
+            let runtime = futures::executor::ThreadPoolBuilder::new()
+                .pool_size(4)
+                .create().expect("failed to create a thread pool");
             Self {
                 last_id: bitmaps::Bitmap::new(),
                 data: typemap::SendMap::new(),
                 drop_ent: |_,_| {},
+                runtime,
             }
         }
 
@@ -116,8 +126,10 @@ pub mod default {
             self.host.system_data::<S>().messages.push((whom,Some(msg)))
         }
 
-        fn spawn<T: 'static, F, Fut, S: System<'h, Host>>(&mut self, fut: Fut, f: F,whom: usize) where Fut: Future<Output=T> + 'static, F: Fn(T) -> S::Message + 'static, Host: Hosts<'h, S> {
-            unimplemented!()
+        fn spawn<T: 'static, F, Fut, S: System<'h, Host>>(&mut self, fut: Fut, f: F,whom: usize) where Fut: Future<Output=T> + Send + 'static, F: FnOnce(T) -> S::Message + 'static, Host: Hosts<'h, S> {
+            let data = self.host.system_data::<S>();
+            let handle = self.host.runtime.spawn_with_handle(fut).unwrap().map(f);
+            data.future_handles.push((whom, Box::new(handle) ));
         }
 
         fn state<S: System<'h, Host>>(&'h mut self) -> &'h mut <S as System<'h, Host>>::State where Host: Hosts<'h, S> {
