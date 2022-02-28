@@ -12,9 +12,9 @@ pub trait Host {
     fn register_entity_component_drop(&mut self,func: fn(&mut Self,Self::Indice));
 }
 
-pub trait Hosts<'h,S: System<'h,Self> + ?Sized + 'static>: Host + 'h {
+pub trait Hosts<S: System<Self> + ?Sized + 'static>: Host {
 
-    fn reduce<'s,'d>(&'h mut self, which: Self::Indice) -> Result<(),crate::errors::traits::ReduceError> where 's: 'd,'h: 's;
+    fn reduce(&mut self, which: Self::Indice) -> Result<(),crate::errors::traits::ReduceError>;
 
     fn get_state(&mut self,which: Self::Indice) -> Option<&mut S>;
 
@@ -22,16 +22,16 @@ pub trait Hosts<'h,S: System<'h,Self> + ?Sized + 'static>: Host + 'h {
     fn unsubscribe(&mut self, who: Self::Indice);
 }
 
-pub trait GlobalState<H: Host>: Sized + 'static {
-    //this should do two things: register a dropping routine for a component; initialize a global system's state
-    fn init(host: &mut H) -> Self;
+pub trait GlobalState<H: Host + ?Sized>: Sized + Default + 'static {
+    //this should do one things: register a dropping routine for a component
+    fn init(host: &mut H);
     // reduce the global state of the system.
     fn update(&mut self, f: impl FnOnce(Self)->Self);
 }
 
-pub trait System<'h,H: Host + Hosts<'h,Self> + ?Sized + 'h>: 'static {
+pub trait System<H: Host + Hosts<Self> + ?Sized>: 'static {
     /// inner message
-    type Message: 'static;
+    type Message: 'static + Send;
 
     /// Some global state of a system
     type State: GlobalState<H> + 'static;
@@ -39,17 +39,17 @@ pub trait System<'h,H: Host + Hosts<'h,Self> + ?Sized + 'h>: 'static {
     /// Properties for component initialization
     type Props;
 
-    fn changed<'s>(this: Option<&'s mut Self>,props: &Self::Props)->Self;
-    fn update<'s>(&'s mut self,state: &mut Self::State,msg: Self::Message, ctx: &mut impl Context<'h,H>) where 'h: 's;
-    fn view<'v>(&'v self,renderer: &'v mut dyn render::Renderer<H>,vp: render::Viewport) -> fn();
+    fn changed(this: Option<&mut Self>,props: &Self::Props)->Self;
+    fn update<'s,'h: 's>(&'s mut self,state: &mut Self::State,msg: Self::Message, ctx: &mut impl Context<'h,H>) where 'h: 's;
+    fn view<'v>(&'v self,renderer: &'v mut dyn render::Renderer<H>,vp: render::Viewport);// -> fn();
 }
 
 
-pub trait Context<'s,H: Host + ?Sized + 's> {
+pub trait Context<'s,H: Host + ?Sized> {
     fn get_host(&mut self) -> &mut H;
-    fn send<S: System<'s,H>>(&mut self,msg: S::Message,whom: H::Indice) where H: Hosts<'s,S>;
+    fn send<S: System<H>>(&mut self,msg: S::Message,whom: H::Indice) where H: Hosts<S>;
 
-    fn spawn<T: 'static,F,Fut,S: System<'s,H>>(&mut self,fut: Fut, f: F,whom: H::Indice)
-        where Fut: Future<Output = T> + Send + 'static , F: Fn(T) -> S::Message + 'static, H: Hosts<'s,S>;
-    fn state<S: System<'s,H>>(&'s mut self) -> &'s mut S::State where H: Hosts<'s,S>;
+    fn spawn<T: 'static + Send,F,Fut,S: System<H>>(&mut self,fut: Fut, f: F,whom: H::Indice)
+        where Fut: Future<Output = T> + Send + 'static , F: Fn(T) -> S::Message + 'static, H: Hosts<S>;
+    fn state<S: System<H>>(&'s mut self) -> &'s mut S::State where H: Hosts<S>;
 }
