@@ -4,47 +4,58 @@ pub mod default {
     use std::collections::BTreeMap;
     use crate::traits::{Context, GlobalState};
     use std::future::Future;
-    use crate::errors::traits::{AllocError,ReduceError::NoSuchIndice};
+    use crate::errors::traits::{AllocError,ReduceError};
     use futures::task::SpawnExt;
-    use futures::FutureExt;
+    use futures::{FutureExt, TryFutureExt, StreamExt};
     use std::marker::PhantomData;
-
+    use typemap::Entry;
+    use std::convert::TryFrom;
+    use bitmaps::Bitmap;
+    use std::collections::btree_map::Entry as BEntry;
 
     pub struct Host {
         /// free ids
-        last_id: bitmaps::Bitmap<1024>,
-        /// a map from Systems to their (subscribers, states) and global states.
-        data: typemap::TypeMap,
-        /// a function for dropping an entity.
-        drop_ent: Option<Box<dyn FnOnce(&mut Self,usize)>>,
+        ids: BTreeMap<u32,bitmaps::Bitmap<1024>>,
+        /// global states of systems
+        states: typemap::TypeMap,
+        /// a map from entities to their components
+        data: BTreeMap<usize,typemap::TypeMap>,
         ///a futures runtime.
         runtime: futures::executor::ThreadPool,
     }
 
-    pub struct SystemData<S: System<Host>> {
-        state: S::State,
-        messages: Vec<(usize,Option<S::Message>)>,
-        data: BTreeMap<usize,S>,
-        //TODO: get rid of boxing somehow
-        future_handles: Vec<(usize,Box<dyn Future<Output = S::Message>>)>,
+    pub struct EntityData<S: System<Host>> {
+        messages: Vec<S::Message>,
+        data: S,
     }
-    
-    impl<S: System<Host>> Default for SystemData<S>{
-        fn default() -> Self {
-            Self{
-                state: S::State::default(),
+
+    impl<S: System<Host>> EntityData<S> {
+        fn new(data: S) -> Self {
+            Self {
+                data,
                 messages: vec![],
-                data: Default::default(),
-                future_handles: vec![],
             }
         }
     }
 
+    pub struct SystemData<S: System<Host>>{
+        state: S::State,
+        //TODO: get rid of boxing somehow
+        future_handles: Vec<(usize,Box<dyn Future<Output = S::Message>>)>,
+    }
+
     struct SystemHolder<S: System<Host> + Any>(PhantomData<S>);
 
-    impl<S: System<Host> + Any + 'static> typemap::Key for SystemHolder<S>
+    impl<S: System<Host> + Any> typemap::Key for SystemHolder<S>
     {
         type Value = SystemData<S>;
+    }
+
+    struct EntityHolder<S: System<Host> + Any>(PhantomData<S>);
+
+    impl<S: System<Host> + Any> typemap::Key for EntityHolder<S>
+    {
+        type Value = EntityData<S>;
     }
 
     impl Host {
@@ -53,19 +64,61 @@ pub mod default {
                 .pool_size(4)
                 .create().expect("failed to create a thread pool");
             Self {
-                last_id: bitmaps::Bitmap::new(),
-                data: typemap::TypeMap::new(),
-                drop_ent: Some(Box::new(|_,_|{})),
+                ids: BTreeMap::new(),
+                states: typemap::TypeMap::new(),
+                data: BTreeMap::new(),
                 runtime,
             }
         }
 
-        pub(crate) fn system_data<S: System<Host>>(&mut self) -> &mut SystemData<S> where Self: Hosts<S>
+        pub(crate) fn spawn_fut<T: 'static + Send,F: FnOnce(T) -> S::Message + 'static, Fut: Future<Output=T> + Send + 'static,S: System<Self>>(&mut self,fut: Fut,f: F, whom: usize) -> bool
+            where Self: Hosts<S>,
         {
-            self.data.entry::<SystemHolder<S>>().or_insert_with(|| {
-                S::State::init(self);
-                Default::default()
-            })
+            match self.states.entry::<SystemHolder<S>>() {
+                Entry::Occupied(mut e) => {
+                    let s = e.get_mut();
+                    let handle = self.runtime.spawn_with_handle(fut).unwrap().map(f);
+                    s.future_handles.push((whom,Box::new(handle)));
+                    true
+                },
+                Entry::Vacant(_) => false,
+            }
+        }
+
+        pub(crate) fn with_entity_data<S: System<Self>,T,F: FnOnce(&mut EntityData<S>) -> T >(&mut self, which: usize,f: F) -> Option<T> where Self: Hosts<S>
+        {
+            self.data.get_mut(&which).map(|m| match m.entry::<EntityHolder<S>>() {
+                Entry::Occupied(mut e) => {
+                    Some(f(e.get_mut()))
+                },
+                _ => {
+                    None
+                }
+            }).flatten()
+        }
+        pub(crate) fn with_system_data<S: System<Self>,T,F: FnOnce(&mut SystemData<S>)-> T>(&mut self,f: F) -> Option<T> where Self: Hosts<S> {
+            match self.states.entry::<SystemHolder<S>>() {
+                Entry::Occupied(mut e) => {
+                    Some(f(e.get_mut()))
+                }
+                Entry::Vacant(_) => None,
+            }
+        }
+        pub(crate) fn with_system_and_entity_data<S: System<Host>,T,F: FnOnce(&mut SystemData<S>,&mut EntityData<S>) -> T>(&mut self,which: usize,f: F)-> Option<T> where Self: Hosts<S> {
+            let (data, states) = (&mut self.data,&mut self.states);
+            match (data.get_mut(&which),states) {
+                (Some(data),state) => {
+                    let (data,state) = (data.entry::<EntityHolder<S>>(),state.entry::<SystemHolder<S>>());
+                    match (data,state) {
+                        (Entry::Occupied(mut data),Entry::Occupied(mut state)) => {
+                            let res = f(state.get_mut(),data.get_mut());
+                            Some(res)
+                        },
+                        (_, _) => None
+                    }
+                },
+                _ => None,
+            }
         }
     }
 
@@ -73,60 +126,65 @@ pub mod default {
         type Indice = usize;
 
         fn allocate_entity(&mut self) -> Result<Self::Indice, crate::errors::traits::AllocError> {
-            self.last_id.first_index().map(|idx| {self.last_id.set(idx,false); idx}).ok_or(crate::errors::traits::AllocError)
+            const HALFWORD: u8 = (usize::BITS / 2) as u8;
+            const MASK: usize = usize::MAX >> HALFWORD;
+
+            let mut res = None;
+            for (k,v) in self.ids.iter_mut() {
+                if *v.as_value() == [0u128;8] {
+                    continue
+                } else {
+                    match v.first_index() {
+                        None => unreachable!(),
+                        Some(idx) => {
+                            let bit = v.set(idx,false);
+                            assert_eq!(bit,true);
+                            //idx here is the position in bitmap.
+                            //res = half a word bits of `k` left and half a word bits of idx right
+                            res = Some( ( ((*k as usize & ! MASK) << HALFWORD) & !MASK ) | ( idx & MASK));
+                            break;
+                        }
+                    }
+                }
+            };
+            res.ok_or(AllocError)
         }
 
         fn drop_entity(&mut self, which: Self::Indice) {
-            (self.drop_ent.unwrap())(self,which);
+            const HALFWORD: u8 = (usize::BITS / 2) as u8;
+            const MASK: usize = usize::MAX >> HALFWORD;
+
+            let (left,right) = (u32::try_from((which >> HALFWORD) & MASK).unwrap(),which & MASK);
+            match self.ids.entry(left) {
+                BEntry::Vacant(_) => {},
+                BEntry::Occupied(mut e) => {
+                    let bm = e.get_mut();
+                    bm.set(right,false);
+                    self.data.remove(&which);
+                }
+            }
         }
 
-        fn register_entity_component_drop(&mut self, func: fn(&mut Self, Self::Indice)) {
-            let mut payload: Box<dyn FnOnce(&mut Self,usize)>;
-            let old_cb = self.drop_ent.take().expect("Ill-formed host");
-            payload = Box::new(move |s,ind| {
-                (old_cb)(s,ind);
-                func(s,ind);
-            });
-            self.drop_ent = Some(payload);
-        }
     }
 
     impl<S: crate::traits::System<Self>> Hosts<S> for Host
     {
-        fn reduce(&mut self, which: Self::Indice) -> Result<(),crate::errors::traits::ReduceError> {
-            let system = self.system_data::<S>();
-            if let Some(state) = system.data.get_mut(&which) {
-                system.messages.iter_mut()
-                    .filter(|(el,_)| *el == which)
-                    .map(|(_,el)| el)
-                    .fold(state,|st,msg| {st.update(&mut system.state,msg.take().expect("found empty message"),&mut HostCtx{host: self}); state});
-                Ok(())
-            } else {
-                Err(NoSuchIndice)
-            }
-
-        }
-
         fn get_state(&mut self, which: Self::Indice) -> Option<&mut S> {
-            self.system_data::<S>()
-                .data.get_mut(&which)
+            self.data.get_mut(&which).map(|tm|{
+                tm.get_mut::<EntityHolder<S>>().map(|data| &mut data.data)
+            }).flatten()
         }
 
         fn subscribe(&mut self, who: Self::Indice, with: <S as System<Self>>::Props) {
-            let entry = self.system_data::<S>();
-            entry.data.entry(who)
-                .and_modify(|old| *old = S::changed(Some(old),&with))
-                .or_insert(S::changed(None,&with));
-
+            let component = EntityData {data: S::changed(None,&with), messages: vec![]};
+            self.data.get_mut(&who).map(|map| map.insert::<EntityHolder<S>>(component));
         }
 
         fn unsubscribe(&mut self, who: Self::Indice) {
-            use typemap::Entry::*;
-            match self.data.entry::<SystemHolder<S>>() {
-                Occupied(mut c) => {
-                    let s = c.get_mut();
-                    s.messages.retain(|(ind,_)| *ind != who);
-                    s.data.remove(&who);
+            use std::collections::btree_map::Entry::*;
+            match self.data.entry(who) {
+                Occupied(c) => {
+                    c.remove();
                 },
                 _ => {},
             };
@@ -143,17 +201,19 @@ pub mod default {
         }
 
         fn send<S: System<Host>>(&mut self, msg: <S as System<Host>>::Message, whom: usize) where Host: Hosts<S> {
-            self.host.system_data::<S>().messages.push((whom,Some(msg)))
+            self.host.with_entity_data::<S,(),_>(whom,|x| { x.messages.push(msg);});
         }
 
-        fn spawn<T: 'static + Send, F, Fut, S: System<Host>>(&mut self, fut: Fut, f: F,whom: usize) where Fut: Future<Output=T> + Send + 'static, F: FnOnce(T) -> S::Message + 'static, Host: Hosts<S> {
-            let data = self.host.system_data::<S>();
-            let handle = self.host.runtime.spawn_with_handle(fut).unwrap().map(f);
-            data.future_handles.push((whom, Box::new(handle) ));
+        fn spawn<T: 'static + Send, F, Fut, S: System<Host>>(&mut self, fut: Fut, f: F,whom: usize) -> bool
+            where Fut: Future<Output=T> + Send + 'static, F: FnOnce(T) -> S::Message + 'static, Host: Hosts<S>
+        {
+            self.host.spawn_fut(fut,f,whom)
         }
 
-        fn state<S: System<Host>>(&'h mut self) -> &'h mut <S as System<Host>>::State where Host: Hosts<S> {
-            &mut self.host.system_data::<S>().state
+        fn with_state<S: System<Host>, T, F: FnOnce(&mut S::State) -> T>(&mut self,f: F) -> Option<T> where Host: Hosts<S> {
+            self.host.with_system_data::<S,T,_>(|s| {
+                f(&mut s.state)
+            })
         }
     }
 }

@@ -9,12 +9,11 @@ pub trait Host {
 
     fn allocate_entity(&mut self) -> Result<Self::Indice,crate::errors::traits::AllocError>;
     fn drop_entity(&mut self,which: Self::Indice);
-    fn register_entity_component_drop(&mut self,func: fn(&mut Self,Self::Indice));
 }
 
 pub trait Hosts<S: System<Self> + ?Sized + 'static>: Host {
 
-    fn reduce(&mut self, which: Self::Indice) -> Result<(),crate::errors::traits::ReduceError>;
+    // fn reduce(&mut self, which: Self::Indice) -> Result<(),crate::errors::traits::ReduceError>;
 
     fn get_state(&mut self,which: Self::Indice) -> Option<&mut S>;
 
@@ -22,10 +21,12 @@ pub trait Hosts<S: System<Self> + ?Sized + 'static>: Host {
     fn unsubscribe(&mut self, who: Self::Indice);
 }
 
-pub trait GlobalState<H: Host + ?Sized>: Sized + Default + 'static {
-    //this should do one things: register a dropping routine for a component
-    fn init(host: &mut H);
-    // reduce the global state of the system.
+pub trait GlobalState<H: Host + ?Sized>: Sized + 'static {
+    /// ctor
+    fn init()-> Self;
+    /// registration routine
+    fn register(&mut self, host: &mut H);
+    /// reduce the global state of the system.
     fn update(&mut self, f: impl FnOnce(Self)->Self);
 }
 
@@ -49,7 +50,7 @@ pub trait Context<'s,H: Host + ?Sized> {
     fn get_host(&mut self) -> &mut H;
     fn send<S: System<H>>(&mut self,msg: S::Message,whom: H::Indice) where H: Hosts<S>;
 
-    fn spawn<T: 'static + Send,F,Fut,S: System<H>>(&mut self,fut: Fut, f: F,whom: H::Indice)
+    fn spawn<T: 'static + Send,F,Fut,S: System<H>>(&mut self,fut: Fut, f: F,whom: H::Indice) -> bool
         where Fut: Future<Output = T> + Send + 'static , F: Fn(T) -> S::Message + 'static, H: Hosts<S>;
-    fn state<S: System<H>>(&'s mut self) -> &'s mut S::State where H: Hosts<S>;
+    fn with_state<S: System<H>,T,F: FnOnce(&mut S::State) -> T>(&mut self,f: F) -> Option<T> where H: Hosts<S>;
 }
