@@ -122,10 +122,12 @@ pub mod default {
         }
     }
 
+    // TODO: fix the implementation
     impl crate::traits::Host for Host {
-        type Indice = usize;
+        type Index = usize;
+        type Event = ();
 
-        fn allocate_entity(&mut self) -> Result<Self::Indice, crate::errors::traits::AllocError> {
+        fn allocate_entity(&mut self) -> Result<Self::Index, crate::errors::traits::AllocError> {
             const HALFWORD: u8 = (usize::BITS / 2) as u8;
             const MASK: usize = usize::MAX >> HALFWORD;
 
@@ -150,7 +152,7 @@ pub mod default {
             res.ok_or(AllocError)
         }
 
-        fn drop_entity(&mut self, which: Self::Indice) {
+        fn drop_entity(&mut self, which: Self::Index) {
             const HALFWORD: u8 = (usize::BITS / 2) as u8;
             const MASK: usize = usize::MAX >> HALFWORD;
 
@@ -165,22 +167,29 @@ pub mod default {
             }
         }
 
+        fn receive_events(&mut self, events: &[Self::Event]) {
+            unimplemented!()
+        }
+
+        fn update_round(&mut self) {
+            unimplemented!()
+        }
     }
 
     impl<S: crate::traits::System<Self>> Hosts<S> for Host
     {
-        fn get_state(&mut self, which: Self::Indice) -> Option<&mut S> {
+        fn get_state(&mut self, which: Self::Index) -> Option<&mut S> {
             self.data.get_mut(&which).map(|tm|{
                 tm.get_mut::<EntityHolder<S>>().map(|data| &mut data.data)
             }).flatten()
         }
 
-        fn subscribe(&mut self, who: Self::Indice, with: <S as System<Self>>::Props) {
+        fn subscribe(&mut self, who: Self::Index, with: <S as System<Self>>::Props) {
             let component = EntityData {data: S::changed(None,&with), messages: vec![]};
             self.data.get_mut(&who).map(|map| map.insert::<EntityHolder<S>>(component));
         }
 
-        fn unsubscribe(&mut self, who: Self::Indice) {
+        fn unsubscribe(&mut self, who: Self::Index) {
             use std::collections::btree_map::Entry::*;
             match self.data.entry(who) {
                 Occupied(c) => {

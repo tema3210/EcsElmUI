@@ -40,7 +40,7 @@ pub trait Painter {
 //Command to place something in the layout
 pub enum FillCommand<H: Host> {
     //We put there a component
-    Component(H::Indice),
+    Component(H::Index),
     //We directly paint something here
     Data( fn(&mut dyn Painter,&dyn StyleTable) ),
     //We don't touch this space.

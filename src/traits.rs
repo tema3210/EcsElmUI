@@ -1,31 +1,43 @@
 use std::future::Future;
 
 pub mod render;
+pub mod event;
 
 pub struct InternalError;
 
 pub trait Host {
-    type Indice;
+    /// A type used to identify entities
+    type Index;
+    /// A type of event received
+    type Event: event::Event;
+    // /// A type for DOM model node, for use in renderer,
+    // type DOM;
 
-    fn allocate_entity(&mut self) -> Result<Self::Indice,crate::errors::traits::AllocError>;
-    fn drop_entity(&mut self,which: Self::Indice);
+    /// Allocate a unique, un occupied index
+    fn allocate_entity(&mut self) -> Result<Self::Index,crate::errors::traits::AllocError>;
+    /// Deallocate given index
+    fn drop_entity(&mut self,which: Self::Index);
+
+    /// Dispatch a batch of events
+    fn receive_events(&mut self,events: &[Self::Event]);
+    /// Run one update round
+    fn update_round(&mut self);
 }
 
 pub trait Hosts<S: System<Self> + ?Sized + 'static>: Host {
 
-    // fn reduce(&mut self, which: Self::Indice) -> Result<(),crate::errors::traits::ReduceError>;
+    fn get_state(&mut self, which: Self::Index) -> Option<&mut S>;
 
-    fn get_state(&mut self,which: Self::Indice) -> Option<&mut S>;
+    fn subscribe(&mut self, who: Self::Index, with: S::Props);
 
-    fn subscribe(&mut self, who: Self::Indice,with: S::Props);
-    fn unsubscribe(&mut self, who: Self::Indice);
+    fn unsubscribe(&mut self, who: Self::Index);
 }
 
 pub trait GlobalState<H: Host + ?Sized>: Sized + 'static {
     /// ctor
     fn init()-> Self;
     /// registration routine
-    fn register(&mut self, host: &mut H);
+    fn register(&mut self, _: &mut H) {}
     /// reduce the global state of the system.
     fn update(&mut self, f: impl FnOnce(Self)->Self);
 }
@@ -42,7 +54,7 @@ pub trait System<H: Host + Hosts<Self> + ?Sized>: 'static {
 
     fn changed(this: Option<&mut Self>,props: &Self::Props)->Self;
     fn update<'s,'h: 's>(&'s mut self,state: &mut Self::State,msg: Self::Message, ctx: &mut impl Context<'h,H>) where 'h: 's;
-    fn view<'v>(&'v self,renderer: &'v mut dyn render::Renderer<H>,vp: render::Viewport);// -> fn();
+    fn view<'v>(&'v self,renderer: &'v mut dyn render::Renderer<H>,vp: render::Viewport);
 }
 
 
