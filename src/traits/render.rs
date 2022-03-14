@@ -68,12 +68,15 @@ impl Viewport {
     }
 }
 
+// TODO: maybe make bgc to be some kind of fragment shader?
 pub struct Layout {
     /// Size
     pub dims: Viewport,
     /// Data format: (beginning of and itself a sub-layout)
     /// begins in left upper corner (x,y)
-    parts: Vec<((u32,u32),Layout)>
+    pub(crate) parts: Vec<((u32,u32),Layout)>,
+    /// background color, can be transparent
+    pub bgc: Color,
 }
 
 impl Layout {
@@ -115,6 +118,7 @@ impl Layout {
                 },
             },
             parts: vec![],
+            bgc: Color::Plain(RGBAColor(0,0,0,255)),
         };
         let new_point = {
             match &cmd {
@@ -159,7 +163,7 @@ impl Layout {
             }
         };
         self.resize(resize_arg);
-        *self = Self{dims: self.dims, parts: vec![
+        *self = Self{bgc: self.bgc,dims: self.dims, parts: vec![
             (new_point,new_part), //new part
             (rest_point,unsafe {std::ptr::read(self)})] // old part
         };
@@ -210,7 +214,7 @@ pub trait StyleTable {
     fn update(&mut self, cmd: StyleCommand);
 }
 
-pub trait Renderer<H: Host>{
+pub trait Renderer<H: Host> {
     /// Here we tell how much space we want to take from initial VP.
     /// We get a response whether we can have enough screen space:
     /// If yes, then this returns `Some(viewport)`, `None` otherwise.

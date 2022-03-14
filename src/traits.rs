@@ -1,18 +1,14 @@
 use std::future::Future;
 
 pub mod render;
-pub mod event;
 
-pub struct InternalError;
 
+//TODO: add a way to draw an app.
 pub trait Host {
     /// A type used to identify entities
     type Index;
-    /// A type of event received
-    type Event: event::Event;
-    // /// A type for DOM model node, for use in renderer,
-    // type DOM;
-
+    /// A type of events used by this host
+    type Event;
     /// Allocate a unique, un occupied index
     fn allocate_entity(&mut self) -> Result<Self::Index,crate::errors::traits::AllocError>;
     /// Deallocate given index
@@ -37,14 +33,14 @@ pub trait GlobalState<H: Host + ?Sized>: Sized + 'static {
     /// ctor
     fn init()-> Self;
     /// registration routine
-    fn register(&mut self, _: &mut H) {}
+    fn register(&mut self, place: &mut H) {}
     /// reduce the global state of the system.
     fn update(&mut self, f: impl FnOnce(Self)->Self);
 }
 
 pub trait System<H: Host + Hosts<Self> + ?Sized>: 'static {
     /// inner message
-    type Message: 'static + Send;
+    type Message: 'static + Send + Unpin;
 
     /// Some global state of a system
     type State: GlobalState<H> + 'static;
@@ -59,10 +55,18 @@ pub trait System<H: Host + Hosts<Self> + ?Sized>: 'static {
 
 
 pub trait Context<'s,H: Host + ?Sized> {
+    /// Get reference to a host
     fn get_host(&mut self) -> &mut H;
-    fn send<S: System<H>>(&mut self,msg: S::Message,whom: H::Indice) where H: Hosts<S>;
+    /// Get an index of current entity
+    fn get_current_index(&mut self) -> H::Index;
 
-    fn spawn<T: 'static + Send,F,Fut,S: System<H>>(&mut self,fut: Fut, f: F,whom: H::Indice) -> bool
+    /// Send a strongly typed message to a component, if the component isn't registered for index, nothing will happen
+    fn send<S: System<H>>(&mut self,msg: S::Message,whom: H::Index) where H: Hosts<S>;
+    /// Set current event -> message transform for current (entity, system) pair
+    fn subscribe<S: System<H>>(&mut self,filter: fn(&H::Event) -> Option<S::Message>) where H: Hosts<S>;
+
+    /// spawn a future with a result -> message transform.
+    fn spawn<T: 'static + Send,F,Fut,S: System<H>>(&mut self,fut: Fut, f: F,whom: H::Index) -> bool
         where Fut: Future<Output = T> + Send + 'static , F: Fn(T) -> S::Message + 'static, H: Hosts<S>;
     fn with_state<S: System<H>,T,F: FnOnce(&mut S::State) -> T>(&mut self,f: F) -> Option<T> where H: Hosts<S>;
 }

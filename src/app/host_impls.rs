@@ -8,18 +8,20 @@ pub mod default {
     use futures::task::SpawnExt;
     use futures::{FutureExt, TryFutureExt, StreamExt};
     use std::marker::PhantomData;
-    use typemap::Entry;
+    use typemap::{Entry, TypeMap};
     use std::convert::TryFrom;
     use bitmaps::Bitmap;
     use std::collections::btree_map::Entry as BEntry;
+    use std::collections::hash_map::Entry as HEntry;
+    use winit::event::WindowEvent;
 
     pub struct Host {
         /// free ids
         ids: BTreeMap<u32,bitmaps::Bitmap<1024>>,
         /// global states of systems
         states: typemap::TypeMap,
-        /// a map from entities to their components
-        data: BTreeMap<usize,typemap::TypeMap>,
+        /// a map from entities to their components, event filters
+        data: BTreeMap<usize,(typemap::TypeMap,Box<dyn for<'s> Fn(&'s <Self as crate::traits::Host>::Event,&'s mut typemap::TypeMap)>)>,
         ///a futures runtime.
         runtime: futures::executor::ThreadPool,
     }
@@ -35,6 +37,9 @@ pub mod default {
                 data,
                 messages: vec![],
             }
+        }
+        fn push(&mut self,msg: S::Message) {
+            self.messages.push(msg);
         }
     }
 
@@ -87,7 +92,7 @@ pub mod default {
 
         pub(crate) fn with_entity_data<S: System<Self>,T,F: FnOnce(&mut EntityData<S>) -> T >(&mut self, which: usize,f: F) -> Option<T> where Self: Hosts<S>
         {
-            self.data.get_mut(&which).map(|m| match m.entry::<EntityHolder<S>>() {
+            self.data.get_mut(&which).map(|(m,_)| match m.entry::<EntityHolder<S>>() {
                 Entry::Occupied(mut e) => {
                     Some(f(e.get_mut()))
                 },
@@ -107,7 +112,7 @@ pub mod default {
         pub(crate) fn with_system_and_entity_data<S: System<Host>,T,F: FnOnce(&mut SystemData<S>,&mut EntityData<S>) -> T>(&mut self,which: usize,f: F)-> Option<T> where Self: Hosts<S> {
             let (data, states) = (&mut self.data,&mut self.states);
             match (data.get_mut(&which),states) {
-                (Some(data),state) => {
+                (Some((data,_)),state) => {
                     let (data,state) = (data.entry::<EntityHolder<S>>(),state.entry::<SystemHolder<S>>());
                     match (data,state) {
                         (Entry::Occupied(mut data),Entry::Occupied(mut state)) => {
@@ -125,7 +130,8 @@ pub mod default {
     // TODO: fix the implementation
     impl crate::traits::Host for Host {
         type Index = usize;
-        type Event = ();
+
+        type Event = winit::event::WindowEvent<'static>;
 
         fn allocate_entity(&mut self) -> Result<Self::Index, crate::errors::traits::AllocError> {
             const HALFWORD: u8 = (usize::BITS / 2) as u8;
@@ -168,9 +174,14 @@ pub mod default {
         }
 
         fn receive_events(&mut self, events: &[Self::Event]) {
-            unimplemented!()
+            for (_,(tm,f)) in self.data.iter_mut() {
+                let mut f = |ev| f(ev,tm);
+                for ev in events.iter() {
+                    f(ev);
+                }
+            }
         }
-
+        //TODO: implement
         fn update_round(&mut self) {
             unimplemented!()
         }
@@ -179,14 +190,14 @@ pub mod default {
     impl<S: crate::traits::System<Self>> Hosts<S> for Host
     {
         fn get_state(&mut self, which: Self::Index) -> Option<&mut S> {
-            self.data.get_mut(&which).map(|tm|{
+            self.data.get_mut(&which).map(|(tm,_)|{
                 tm.get_mut::<EntityHolder<S>>().map(|data| &mut data.data)
             }).flatten()
         }
 
         fn subscribe(&mut self, who: Self::Index, with: <S as System<Self>>::Props) {
             let component = EntityData {data: S::changed(None,&with), messages: vec![]};
-            self.data.get_mut(&who).map(|map| map.insert::<EntityHolder<S>>(component));
+            self.data.get_mut(&who).map(|(map,_)| map.insert::<EntityHolder<S>>(component));
         }
 
         fn unsubscribe(&mut self, who: Self::Index) {
@@ -202,6 +213,7 @@ pub mod default {
 
     pub struct HostCtx<'h> {
         host: &'h mut Host,
+        cur_index: usize,
     }
 
     impl<'h> crate::traits::Context<'h,Host> for HostCtx<'h> {
@@ -209,8 +221,33 @@ pub mod default {
             self.host
         }
 
+        fn get_current_index(&mut self) -> usize {
+            self.cur_index
+        }
+
         fn send<S: System<Host>>(&mut self, msg: <S as System<Host>>::Message, whom: usize) where Host: Hosts<S> {
             self.host.with_entity_data::<S,(),_>(whom,|x| { x.messages.push(msg);});
+        }
+
+        fn subscribe<S: System<Host>>(&mut self, filter: fn(&<Host as crate::traits::Host>::Event) -> Option<<S as System<Host>>::Message>) where Host: Hosts<S> {
+            let index = self.cur_index;
+            let reducer = move |ev: &winit::event::WindowEvent<'static>,e_data: &mut typemap::TypeMap| -> () {
+                if let Some(m) = filter(ev) {
+                    match e_data.entry::<EntityHolder<S>>() {
+                        Entry::Occupied(mut e) => {
+                            let e = e.get_mut();
+                            e.push(m);
+                        }
+                        Entry::Vacant(_) => {}
+                    }
+                };
+            };
+            match self.host.data.entry(index) {
+                BEntry::Vacant(_) => {}
+                BEntry::Occupied(mut e) => {
+                    e.get_mut().1 = Box::new(reducer);
+                }
+            }
         }
 
         fn spawn<T: 'static + Send, F, Fut, S: System<Host>>(&mut self, fut: Fut, f: F,whom: usize) -> bool
