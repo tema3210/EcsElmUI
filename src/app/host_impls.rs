@@ -215,34 +215,53 @@ pub mod default {
             let reducer: fn(&mut Host) = move |hst: &mut Host| {
                 let keys = hst.data.keys().cloned().collect::<Vec<_>>();
                 for wch in keys {
-                    match hst.data.entry(wch) {
-                        BEntry::Vacant(_) => {}
-                        BEntry::Occupied(mut e) => {
-                            let (e,_) = e.get_mut();
-                            match e.entry::<EntityHolder<S>>() {
-                                Entry::Occupied(mut ent) => {
-                                    // take out of host our reduced data
-                                    let mut e_data = ent.remove();
-                                    // create reducing context
-                                    let mut ctx = HostCtx{
-                                        cur_index: wch,
-                                        host: hst,
-                                        cur_type_id: TypeId::of::<S>(),
-                                        msgs: Box::new(Vec::new()),
-                                    };
-                                    // reduce our data
-                                    e_data.reduce(&mut ctx);
-                                    //now, ctx.msgs contains new messages for current component
-
-                                    //after that, we have these components here
-                                    assert!(e_data.messages.is_empty());
-                                    std::mem::swap(&mut e_data.messages,ctx.msgs.downcast_mut::<Vec<S::Message>>().unwrap());
-                                    // put the data back
-                                    e.insert::<EntityHolder<S>>(e_data);
+                    if let Some(mut e_data) = {
+                        match hst.data.entry(wch) {
+                            BEntry::Vacant(_) => None,
+                            BEntry::Occupied(mut e) => {
+                                let (e,_) = e.get_mut();
+                                match e.entry::<EntityHolder<S>>() {
+                                    Entry::Occupied(mut ent) => {
+                                        // take out of host our reduced data
+                                        Some(ent.remove())
+                                    }
+                                    Entry::Vacant(_) => None
                                 }
-                                Entry::Vacant(_) => {}
                             }
                         }
+                    } {
+                        // create reducing context
+                        let mut ctx = HostCtx{
+                            cur_index: wch,
+                            host: hst,
+                            cur_type_id: TypeId::of::<S>(),
+                            msgs: Box::new(Vec::<S::Message>::new()),
+                        };
+                        // reduce our data
+                        e_data.reduce(&mut ctx);
+
+                        let mut msgs = ctx.msgs;
+                        ctx.msgs = Box::new(());
+                        drop(ctx);
+                        //now, msgs contains new messages for current component
+                        match hst.data.entry(wch) {
+                            BEntry::Vacant(_) => {},
+                            BEntry::Occupied(mut e) => {
+                                let (e,_) = e.get_mut();
+                                match e.entry::<EntityHolder<S>>() {
+                                    Entry::Occupied(_) => {
+                                        unreachable!();
+                                    }
+                                    // and place our entry back
+                                    Entry::Vacant(mut e) => {
+                                        std::mem::swap(&mut e_data.messages, msgs.downcast_mut::<Vec<S::Message>>().unwrap());
+                                        e.insert(e_data);
+                                    },
+                                }
+                            }
+                        }
+                    } else {
+                        continue;
                     }
                 }
             };
