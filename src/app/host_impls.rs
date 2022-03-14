@@ -23,7 +23,7 @@ pub mod default {
         /// a map from entities to their components, event filters
         data: BTreeMap<usize,(typemap::TypeMap, ProcessingFunctionsEntity)>,
         /// collection of reducer functions, one for each system
-        msg_reducers: HashMap<TypeId,Box<dyn FnMut(&mut Self)>>,
+        msg_reducers: HashMap<TypeId,std::sync::Arc<dyn Fn(&mut Self)>>,
         /// a futures runtime.
         runtime: futures::executor::ThreadPool,
     }
@@ -49,7 +49,7 @@ pub mod default {
             self.messages.push(msg);
         }
 
-        fn reduce(&mut self,ctx: &mut HostCtx<'_>) {
+        fn reduce<'a>(&'a mut self,ctx: &mut impl crate::traits::Context<'a,Host>) {
             let mut vec = Vec::new();
             std::mem::swap(&mut vec, &mut self.messages);
             for i in vec {
@@ -195,9 +195,9 @@ pub mod default {
                 }
             }
         }
-        //TODO: make the borrow checker happy
         fn update_round(&mut self) {
-            for (_,red) in self.msg_reducers.iter_mut() {
+            let updaters: Vec<_> = self.msg_reducers.values().cloned().collect();
+            for red in updaters {
                 red(self)
             }
         }
@@ -212,21 +212,45 @@ pub mod default {
         }
 
         fn subscribe(&mut self, who: Self::Index, with: <S as System<Self>>::Props) {
-            let reducer = <EntityData<S>>::reduce;
-            //todo: make the borrow checker happy 2
-            let reducer2 = move |hst: &mut Host| {
-                for which in hst.data.keys().cloned() {
-                    hst.with_entity_data(
-                        which,
-                        |h| reducer(h,&mut HostCtx{cur_index: which,host: hst})
-                    );
-                };
+            let reducer: fn(&mut Host) = move |hst: &mut Host| {
+                let keys = hst.data.keys().cloned().collect::<Vec<_>>();
+                for wch in keys {
+                    match hst.data.entry(wch) {
+                        BEntry::Vacant(_) => {}
+                        BEntry::Occupied(mut e) => {
+                            let (e,_) = e.get_mut();
+                            match e.entry::<EntityHolder<S>>() {
+                                Entry::Occupied(mut ent) => {
+                                    // take out of host our reduced data
+                                    let mut e_data = ent.remove();
+                                    // create reducing context
+                                    let mut ctx = HostCtx{
+                                        cur_index: wch,
+                                        host: hst,
+                                        cur_type_id: TypeId::of::<S>(),
+                                        msgs: Box::new(Vec::new()),
+                                    };
+                                    // reduce our data
+                                    e_data.reduce(&mut ctx);
+                                    //now, ctx.msgs contains new messages for current component
+
+                                    //after that, we have these components here
+                                    assert!(e_data.messages.is_empty());
+                                    std::mem::swap(&mut e_data.messages,ctx.msgs.downcast_mut::<Vec<S::Message>>().unwrap());
+                                    // put the data back
+                                    e.insert::<EntityHolder<S>>(e_data);
+                                }
+                                Entry::Vacant(_) => {}
+                            }
+                        }
+                    }
+                }
             };
             //here we accumulated a reducer for subscribers system.
             match self.msg_reducers.entry(TypeId::of::<S>()) {
                 HEntry::Occupied(_) => {}
                 HEntry::Vacant(mut e) => {
-                    e.insert(Box::new(reducer2));
+                    e.insert(std::sync::Arc::new(reducer));
                 }
             }
 
@@ -248,6 +272,8 @@ pub mod default {
     pub struct HostCtx<'h> {
         host: &'h mut Host,
         cur_index: usize,
+        cur_type_id: TypeId,
+        msgs: Box<dyn Any>,
     }
 
     impl<'h> crate::traits::Context<'h,Host> for HostCtx<'h> {
@@ -259,8 +285,14 @@ pub mod default {
             self.cur_index
         }
 
+        /// Note, in crate provided `Host` impl it's not possible to send a message
         fn send<S: System<Host>>(&mut self, msg: <S as System<Host>>::Message, whom: usize) where Host: Hosts<S> {
-            self.host.with_entity_data::<S,(),_>(whom,|x| { x.messages.push(msg);});
+            if whom == self.cur_index && TypeId::of::<S>() == self.cur_type_id {
+                let msgs = self.msgs.downcast_mut::<Vec<S::Message>>().unwrap();
+                msgs.push(msg);
+            } else {
+                self.host.with_entity_data::<S,(),_>(whom,|x| { x.messages.push(msg);});
+            }
         }
 
         fn subscribe<S: System<Host>>(&mut self, filter: fn(&<Host as crate::traits::Host>::Event) -> Option<<S as System<Host>>::Message>) where Host: Hosts<S> {

@@ -38,7 +38,7 @@ pub trait GlobalState<H: Host + ?Sized>: Sized + 'static {
     fn update(&mut self, f: impl FnOnce(Self)->Self);
 }
 
-pub trait System<H: Host + Hosts<Self> + ?Sized>: 'static {
+pub trait System<H: Host + Hosts<Self> + ?Sized>: 'static + Unpin {
     /// inner message
     type Message: 'static + Send + Unpin;
 
