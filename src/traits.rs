@@ -33,7 +33,7 @@ pub trait GlobalState<H: Host + ?Sized>: Sized + 'static {
     /// ctor
     fn init()-> Self;
     /// registration routine
-    fn register(&mut self, place: &mut H) {}
+    fn register(&mut self, place: &mut H);
     /// reduce the global state of the system.
     fn update(&mut self, f: impl FnOnce(Self)->Self);
 }
@@ -49,14 +49,15 @@ pub trait System<H: Host + Hosts<Self> + ?Sized>: 'static {
     type Props;
 
     fn changed(this: Option<&mut Self>,props: &Self::Props)->Self;
-    fn update<'s,'h: 's>(&'s mut self,state: &mut Self::State,msg: Self::Message, ctx: &mut impl Context<'h,H>) where 'h: 's;
+    /// Note: Global state of the system can be accessed via a ctx
+    fn update<'s,'h: 's>(&'s mut self,msg: Self::Message, ctx: &mut impl Context<'h,H>) where 'h: 's;
     fn view<'v>(&'v self,renderer: &'v mut dyn render::Renderer<H>,vp: render::Viewport);
 }
 
 
 pub trait Context<'s,H: Host + ?Sized> {
     /// Get reference to a host
-    fn get_host(&mut self) -> &mut H;
+    fn get_host(&mut self) -> &mut dyn Host<Event = H::Event,Index = H::Index>;
     /// Get an index of current entity
     fn get_current_index(&mut self) -> H::Index;
 

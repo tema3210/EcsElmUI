@@ -1,7 +1,7 @@
 pub mod default {
     use crate::traits::{Hosts, System};
     use std::any::{Any, TypeId};
-    use std::collections::BTreeMap;
+    use std::collections::{BTreeMap,HashMap};
     use crate::traits::{Context, GlobalState};
     use std::future::Future;
     use crate::errors::traits::{AllocError,ReduceError};
@@ -21,9 +21,16 @@ pub mod default {
         /// global states of systems
         states: typemap::TypeMap,
         /// a map from entities to their components, event filters
-        data: BTreeMap<usize,(typemap::TypeMap,Box<dyn for<'s> Fn(&'s <Self as crate::traits::Host>::Event,&'s mut typemap::TypeMap)>)>,
-        ///a futures runtime.
+        data: BTreeMap<usize,(typemap::TypeMap, ProcessingFunctionsEntity)>,
+        /// collection of reducer functions, one for each system
+        msg_reducers: HashMap<TypeId,Box<dyn FnMut(&mut Self)>>,
+        /// a futures runtime.
         runtime: futures::executor::ThreadPool,
+    }
+
+    /// the functions to interact with systems in type erased setting
+    struct ProcessingFunctionsEntity {
+        event_dispatch: Box<dyn for<'s> Fn(&'s <Host as crate::traits::Host>::Event,&'s mut typemap::TypeMap)>,
     }
 
     pub struct EntityData<S: System<Host>> {
@@ -41,11 +48,18 @@ pub mod default {
         fn push(&mut self,msg: S::Message) {
             self.messages.push(msg);
         }
+
+        fn reduce(&mut self,ctx: &mut HostCtx<'_>) {
+            let mut vec = Vec::new();
+            std::mem::swap(&mut vec, &mut self.messages);
+            for i in vec {
+                S::update(&mut self.data,i,ctx)
+            }
+        }
     }
 
     pub struct SystemData<S: System<Host>>{
         state: S::State,
-        //TODO: get rid of boxing somehow
         future_handles: Vec<(usize,Box<dyn Future<Output = S::Message>>)>,
     }
 
@@ -72,6 +86,7 @@ pub mod default {
                 ids: BTreeMap::new(),
                 states: typemap::TypeMap::new(),
                 data: BTreeMap::new(),
+                msg_reducers: Default::default(),
                 runtime,
             }
         }
@@ -127,7 +142,6 @@ pub mod default {
         }
     }
 
-    // TODO: fix the implementation
     impl crate::traits::Host for Host {
         type Index = usize;
 
@@ -175,15 +189,17 @@ pub mod default {
 
         fn receive_events(&mut self, events: &[Self::Event]) {
             for (_,(tm,f)) in self.data.iter_mut() {
-                let mut f = |ev| f(ev,tm);
+                let mut f = |ev| (f.event_dispatch)(ev,tm);
                 for ev in events.iter() {
                     f(ev);
                 }
             }
         }
-        //TODO: implement
+        //TODO: make the borrow checker happy
         fn update_round(&mut self) {
-            unimplemented!()
+            for (_,red) in self.msg_reducers.iter_mut() {
+                red(self)
+            }
         }
     }
 
@@ -196,6 +212,24 @@ pub mod default {
         }
 
         fn subscribe(&mut self, who: Self::Index, with: <S as System<Self>>::Props) {
+            let reducer = <EntityData<S>>::reduce;
+            //todo: make the borrow checker happy 2
+            let reducer2 = move |hst: &mut Host| {
+                for which in hst.data.keys().cloned() {
+                    hst.with_entity_data(
+                        which,
+                        |h| reducer(h,&mut HostCtx{cur_index: which,host: hst})
+                    );
+                };
+            };
+            //here we accumulated a reducer for subscribers system.
+            match self.msg_reducers.entry(TypeId::of::<S>()) {
+                HEntry::Occupied(_) => {}
+                HEntry::Vacant(mut e) => {
+                    e.insert(Box::new(reducer2));
+                }
+            }
+
             let component = EntityData {data: S::changed(None,&with), messages: vec![]};
             self.data.get_mut(&who).map(|(map,_)| map.insert::<EntityHolder<S>>(component));
         }
@@ -217,7 +251,7 @@ pub mod default {
     }
 
     impl<'h> crate::traits::Context<'h,Host> for HostCtx<'h> {
-        fn get_host(&mut self) -> &mut Host {
+        fn get_host(&mut self) -> &mut dyn crate::traits::Host<Event = winit::event::WindowEvent<'static>,Index = usize> {
             self.host
         }
 
@@ -245,7 +279,7 @@ pub mod default {
             match self.host.data.entry(index) {
                 BEntry::Vacant(_) => {}
                 BEntry::Occupied(mut e) => {
-                    e.get_mut().1 = Box::new(reducer);
+                    e.get_mut().1.event_dispatch = Box::new(reducer);
                 }
             }
         }
