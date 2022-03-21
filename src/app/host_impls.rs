@@ -14,6 +14,13 @@ pub mod default {
     use std::collections::btree_map::Entry as BEntry;
     use std::collections::hash_map::Entry as HEntry;
     use winit::event::WindowEvent;
+    use std::task::{Poll, Waker, RawWaker, RawWakerVTable};
+    use std::pin::Pin;
+    use winit::event::VirtualKeyCode::Wake;
+    use std::sync::Arc;
+    use crate::traits::render::{Anchor,Viewport};
+
+    type EntityStorage = BTreeMap<usize,(typemap::TypeMap, ProcessingFunctionsEntity)>;
 
     pub struct Host {
         /// free ids
@@ -21,9 +28,11 @@ pub mod default {
         /// global states of systems
         states: typemap::TypeMap,
         /// a map from entities to their components, event filters
-        data: BTreeMap<usize,(typemap::TypeMap, ProcessingFunctionsEntity)>,
+        data: EntityStorage,
         /// collection of reducer functions, one for each system
         msg_reducers: HashMap<TypeId,std::sync::Arc<dyn Fn(&mut Self)>>,
+
+        future_delivery: HashMap<TypeId,std::sync::Arc<dyn Fn(&mut TypeMap,&mut EntityStorage)>>,
         /// a futures runtime.
         runtime: futures::executor::ThreadPool,
     }
@@ -31,6 +40,7 @@ pub mod default {
     /// the functions to interact with systems in type erased setting
     struct ProcessingFunctionsEntity {
         event_dispatch: Box<dyn for<'s> Fn(&'s <Host as crate::traits::Host>::Event,&'s mut typemap::TypeMap)>,
+        // poll_fn: Box<dyn for<'s> Fn(&'s mut typemap::TypeMap)>,
     }
 
     pub struct EntityData<S: System<Host>> {
@@ -60,8 +70,48 @@ pub mod default {
 
     pub struct SystemData<S: System<Host>>{
         state: S::State,
-        future_handles: Vec<(usize,Box<dyn Future<Output = S::Message>>)>,
+        future_handles: Vec<(usize,Pin<Box<dyn Future<Output = S::Message>>>)>,
     }
+
+    /// This does nothing
+    static R_W_VTable: RawWakerVTable = RawWakerVTable::new(
+        |waker_ptr| unsafe { core::ptr::read(waker_ptr as *const RawWaker) },
+        |_p|{},
+        |_p|{},
+        |_p|{},
+    );
+
+    /// This is wrapper of the above
+    impl<S: System<Host>> SystemData<S> {
+        fn poll(&mut self,host: &mut EntityStorage) {
+            //init
+            let mut rw: RawWaker = RawWaker::new(core::ptr::null(),&R_W_VTable);
+            //patch in correct reference
+            rw = RawWaker::new(&rw as *const _ as *const (),&R_W_VTable);
+
+            // SAFETY the only usage of this waker is `wake`, which does nothing.
+            // todo: revisit it later (20.03.22)
+            let waker = unsafe { Waker::from_raw(rw) };
+
+            for (to,fut) in self.future_handles.iter_mut() {
+                match fut.as_mut().poll(&mut core::task::Context::from_waker(&waker)) {
+                    Poll::Ready(msg) => {
+                        match host.entry(*to) {
+                            BEntry::Occupied(mut e) => {
+                                match e.get_mut().0.entry::<EntityHolder<S>>() {
+                                    Entry::Occupied(mut e) => e.get_mut().push(msg),
+                                    Entry::Vacant(_) => continue,
+                                }
+                            },
+                            BEntry::Vacant(_) => continue,
+                        }
+                    },
+                    Poll::Pending => continue,
+                }
+            }
+        }
+    }
+
 
     struct SystemHolder<S: System<Host> + Any>(PhantomData<S>);
 
@@ -87,18 +137,33 @@ pub mod default {
                 states: typemap::TypeMap::new(),
                 data: BTreeMap::new(),
                 msg_reducers: Default::default(),
+                future_delivery: HashMap::new(),
                 runtime,
             }
         }
-
         pub(crate) fn spawn_fut<T: 'static + Send,F: FnOnce(T) -> S::Message + 'static, Fut: Future<Output=T> + Send + 'static,S: System<Self>>(&mut self,fut: Fut,f: F, whom: usize) -> bool
             where Self: Hosts<S>,
         {
+            let clo = |states: &mut TypeMap,store: &mut EntityStorage| {
+                match states.entry::<SystemHolder<S>>() {
+                    Entry::Occupied(mut e) => {
+                        e.get_mut().poll(store);
+                    },
+                    Entry::Vacant(_) => {},
+                }
+            };
+            match self.future_delivery.entry(TypeId::of::<S>()) {
+                HEntry::Occupied(_) => {},
+                HEntry::Vacant(mut e) => {
+                    //insert the processing function
+                    e.insert(Arc::new(clo));
+                }
+            };
             match self.states.entry::<SystemHolder<S>>() {
                 Entry::Occupied(mut e) => {
                     let s = e.get_mut();
                     let handle = self.runtime.spawn_with_handle(fut).unwrap().map(f);
-                    s.future_handles.push((whom,Box::new(handle)));
+                    s.future_handles.push((whom,Box::pin(handle)));
                     true
                 },
                 Entry::Vacant(_) => false,
@@ -172,6 +237,11 @@ pub mod default {
             res.ok_or(AllocError)
         }
 
+        //todo: implement
+        fn set_entity_data(&mut self, which: Self::Index, anchors: Vec<Anchor>, vp: Viewport) {
+            unimplemented!()
+        }
+
         fn drop_entity(&mut self, which: Self::Index) {
             const HALFWORD: u8 = (usize::BITS / 2) as u8;
             const MASK: usize = usize::MAX >> HALFWORD;
@@ -186,20 +256,25 @@ pub mod default {
                 }
             }
         }
-
+        //TODO: think of dispatch between currently rendered components
         fn receive_events(&mut self, events: &[Self::Event]) {
             for (_,(tm,f)) in self.data.iter_mut() {
                 let mut f = |ev| (f.event_dispatch)(ev,tm);
                 for ev in events.iter() {
+                    // here must go filter for mouse events
                     f(ev);
                 }
             }
         }
         fn update_round(&mut self) {
-            let updaters: Vec<_> = self.msg_reducers.values().cloned().collect();
-            for red in updaters {
+            let reducers: Vec<_> = self.msg_reducers.values().cloned().collect();
+            for red in reducers {
                 red(self)
-            }
+            };
+            let delivery: Vec<_> = self.future_delivery.values().cloned().collect();
+            for val in delivery {
+                val(&mut self.states,&mut self.data)
+            };
         }
     }
 
@@ -273,7 +348,7 @@ pub mod default {
                 }
             }
 
-            let component = EntityData {data: S::changed(None,&with), messages: vec![]};
+            let component = EntityData {data: S::changed(None,&with).unwrap(), messages: vec![]};
             self.data.get_mut(&who).map(|(map,_)| map.insert::<EntityHolder<S>>(component));
         }
 

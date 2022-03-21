@@ -4,9 +4,9 @@
 
 1. After app initialization, construct all its `System`\'s `GlobalState`s using their trait's `init` associated function;
 2. Then, application loop invokes methods in the following order:
-   1. Run one update round*;
-   2. Draw;
-   3. Receive event batch**;
+   1. Draw;
+   2. Receive event batch**;
+   3. Run one update round*;
 
 \* update round means processing all messages existed before its start; messages sent during current round are processed either in course of current round, if their target hasn't been proceed yet, or during the next round, if it has been.\
 \** this also produces messages for the next round.
@@ -17,6 +17,5 @@ When system component receives the corresponding message, then application shoul
 
 ## Rendering
 
-All rendering start in window components. Each gets its element tree.
-
-An element tree is produced by `Renderer::layout`, and then it's 
+Each entity declares a set of anchors, to which its systems may attach layouts.
+ 

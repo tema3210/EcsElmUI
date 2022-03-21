@@ -2,15 +2,18 @@ use std::future::Future;
 
 pub mod render;
 
-
 //TODO: add a way to draw an app.
+//todo: support styling?
 pub trait Host {
     /// A type used to identify entities
     type Index;
     /// A type of events used by this host
     type Event;
+
     /// Allocate a unique, un occupied index
     fn allocate_entity(&mut self) -> Result<Self::Index,crate::errors::traits::AllocError>;
+    /// Setups required data for entity
+    fn set_entity_data(&mut self,which: Self::Index, anchors: Vec<render::Anchor>, vp: render::Viewport);
     /// Deallocate given index
     fn drop_entity(&mut self,which: Self::Index);
 
@@ -38,7 +41,7 @@ pub trait GlobalState<H: Host + ?Sized>: Sized + 'static {
     fn update(&mut self, f: impl FnOnce(Self)->Self);
 }
 
-pub trait System<H: Host + Hosts<Self> + ?Sized>: 'static + Unpin {
+pub trait System<H: Host + Hosts<Self> + ?Sized>: 'static + Unpin + Sized {
     /// inner message
     type Message: 'static + Send + Unpin;
 
@@ -47,11 +50,14 @@ pub trait System<H: Host + Hosts<Self> + ?Sized>: 'static + Unpin {
 
     /// Properties for component initialization
     type Props;
-
-    fn changed(this: Option<&mut Self>,props: &Self::Props)->Self;
+    /// if props has changed...
+    fn changed(this: Option<&mut Self>,props: &Self::Props) -> Option<Self>;
     /// Note: Global state of the system can be accessed via a ctx
     fn update<'s,'h: 's>(&'s mut self,msg: Self::Message, ctx: &mut impl Context<'h,H>) where 'h: 's;
-    fn view<'v>(&'v self,renderer: &'v mut dyn render::Renderer<H>,vp: render::Viewport);
+    /// This should return the number of different views of the component.
+    fn count_views(&self) -> usize;
+    /// Draw a component; viewport describes boundaries of a component, view_index is the number of view we are going to draw
+    fn view<'v>(&'v self,renderer: &'v mut dyn render::Renderer<H>,viewport: render::Viewport,view_index: usize);
 }
 
 
