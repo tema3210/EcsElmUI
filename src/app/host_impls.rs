@@ -18,7 +18,8 @@ pub mod default {
     use std::pin::Pin;
     use winit::event::VirtualKeyCode::Wake;
     use std::sync::Arc;
-    use crate::traits::render::{Anchor,Viewport};
+    use std::path::Path;
+    use crate::traits::render::{StyleShadow, StyleChange, Style, StyleTable,Anchor,Viewport,Filling,self};
 
     type EntityStorage = BTreeMap<usize,(typemap::TypeMap, ProcessingFunctionsEntity)>;
 
@@ -29,12 +30,39 @@ pub mod default {
         states: typemap::TypeMap,
         /// a map from entities to their components, event filters
         data: EntityStorage,
+        /// a map from entities to their views
+        data_view: BTreeMap<usize,ViewData<Host>>,
         /// collection of reducer functions, one for each system
         msg_reducers: HashMap<TypeId,std::sync::Arc<dyn Fn(&mut Self)>>,
 
         future_delivery: HashMap<TypeId,std::sync::Arc<dyn Fn(&mut TypeMap,&mut EntityStorage)>>,
         /// a futures runtime.
         runtime: futures::executor::ThreadPool,
+    }
+
+    pub struct ViewData<H: crate::traits::Host> {
+        anchors: std::collections::HashMap<render::Anchor,Option<render::Filling<H>>>,
+        vp: render::Viewport,
+        //todo: add styling table
+    }
+
+    //todo: implement
+    impl<H: crate::traits::Host> crate::traits::View<H> for ViewData<H> {
+        fn anchors(&self) -> &[Anchor] {
+            unimplemented!()
+        }
+
+        fn set_layout(&mut self, anc: Anchor, filling: Filling<H>) {
+            unimplemented!()
+        }
+
+        fn viewport(&self) -> Viewport {
+            unimplemented!()
+        }
+
+        fn get_style_table(&self) -> &mut dyn StyleTable {
+            unimplemented!()
+        }
     }
 
     /// the functions to interact with systems in type erased setting
@@ -136,6 +164,7 @@ pub mod default {
                 ids: BTreeMap::new(),
                 states: typemap::TypeMap::new(),
                 data: BTreeMap::new(),
+                data_view: Default::default(),
                 msg_reducers: Default::default(),
                 future_delivery: HashMap::new(),
                 runtime,
@@ -211,6 +240,7 @@ pub mod default {
         type Index = usize;
 
         type Event = winit::event::WindowEvent<'static>;
+        type EntityView = ViewData<Host>;
 
         fn allocate_entity(&mut self) -> Result<Self::Index, crate::errors::traits::AllocError> {
             const HALFWORD: u8 = (usize::BITS / 2) as u8;
@@ -238,7 +268,7 @@ pub mod default {
         }
 
         //todo: implement
-        fn set_entity_data(&mut self, which: Self::Index, anchors: Vec<Anchor>, vp: Viewport) {
+        fn set_entity_data(&mut self, which: Self::Index, data: ViewData<Self>) {
             unimplemented!()
         }
 
@@ -371,7 +401,7 @@ pub mod default {
     }
 
     impl<'h> crate::traits::Context<'h,Host> for HostCtx<'h> {
-        fn get_host(&mut self) -> &mut dyn crate::traits::Host<Event = winit::event::WindowEvent<'static>,Index = usize> {
+        fn get_host(&mut self) -> &mut Host {
             self.host
         }
 

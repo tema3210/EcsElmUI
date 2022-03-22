@@ -9,11 +9,13 @@ pub trait Host {
     type Index;
     /// A type of events used by this host
     type Event;
+    /// A type of style table
+    type EntityView: View<Self>;
 
     /// Allocate a unique, un occupied index
     fn allocate_entity(&mut self) -> Result<Self::Index,crate::errors::traits::AllocError>;
     /// Setups required data for entity
-    fn set_entity_data(&mut self,which: Self::Index, anchors: Vec<render::Anchor>, vp: render::Viewport);
+    fn set_entity_data(&mut self,which: Self::Index, data: Self::EntityView);
     /// Deallocate given index
     fn drop_entity(&mut self,which: Self::Index);
 
@@ -21,6 +23,13 @@ pub trait Host {
     fn receive_events(&mut self,events: &[Self::Event]);
     /// Run one update round
     fn update_round(&mut self);
+}
+
+pub trait View<H: Host + ?Sized> {
+    fn anchors(&self) -> &[render::Anchor];
+    fn set_layout(&mut self,anc: render::Anchor,filling: render::Filling<H>);
+    fn viewport(&self) -> render::Viewport;
+    fn get_style_table(&self) -> &mut dyn render::StyleTable;
 }
 
 pub trait Hosts<S: System<Self> + ?Sized + 'static>: Host {
@@ -41,6 +50,7 @@ pub trait GlobalState<H: Host + ?Sized>: Sized + 'static {
     fn update(&mut self, f: impl FnOnce(Self)->Self);
 }
 
+//todo: think of bundles (aka Systems which depend on other Systems)
 pub trait System<H: Host + Hosts<Self> + ?Sized>: 'static + Unpin + Sized {
     /// inner message
     type Message: 'static + Send + Unpin;
@@ -63,7 +73,7 @@ pub trait System<H: Host + Hosts<Self> + ?Sized>: 'static + Unpin + Sized {
 
 pub trait Context<'s,H: Host + ?Sized> {
     /// Get reference to a host
-    fn get_host(&mut self) -> &mut dyn Host<Event = H::Event,Index = H::Index>;
+    fn get_host(&mut self) -> &mut H;
     /// Get an index of current entity
     fn get_current_index(&mut self) -> H::Index;
 

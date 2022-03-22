@@ -35,7 +35,7 @@ pub trait Painter {
 }
 
 //Command to place something in the layout
-pub enum Filling<H: Host> {
+pub enum Filling<H: Host + ?Sized> {
     //We put there a component
     Component(H::Index,usize),
     //We directly paint something here //todo: make interactions with wgpu
@@ -66,7 +66,7 @@ impl Viewport {
 }
 
 // TODO: maybe make bgc to be some kind of fragment shader?
-pub struct Layout<H: Host> {
+pub struct Layout<H: Host + ?Sized> {
     /// Size
     pub dims: Viewport,
     /// Data format: (beginning of and itself a sub-layout)
@@ -76,7 +76,7 @@ pub struct Layout<H: Host> {
     pub bgc: Color,
 }
 
-pub enum StyleCommand<'p> {
+pub enum StyleChange<'p> {
     OverwriteColor {
         /// A path to modified style
         what: &'p std::path::Path,
@@ -87,15 +87,15 @@ pub enum StyleCommand<'p> {
         what: &'p std::path::Path,
         new_weight: u16,
     },
-    Shadow {
-        what: &'p std::path::Path,
-    },
 }
 
-/// This is global API.
+pub struct StyleShadow<'p>(&'p std::path::Path);
+
+/// This is scoped API.
 pub trait StyleTable {
     fn get(&self, which: &std::path::Path) -> Style;
-    fn update(&mut self, cmd: StyleCommand);
+    fn update(&mut self, cmd: StyleChange);
+    fn scope(&mut self, shadow_commands: &[StyleShadow]) -> Box<dyn StyleTable>;
 }
 
 #[derive(Clone)]
@@ -118,11 +118,13 @@ impl Deref for Anchor {
     }
 }
 
-pub trait Renderer<H: Host> {
+
+/// this is API for restricted access to rendering process
+pub trait Renderer<H: Host + ?Sized> {
     /// Get a set of anchors, to which we attach layouts
     fn anchors(&mut self) -> &[Anchor];
     /// We attach layouts to labels
     fn layout(&mut self, layout: Layout<H>, label: Anchor, z_index: u32);
-    /// Here we can modify styling.
-    fn style(&mut self,commands: &[StyleCommand]);
+    // /// Here we can modify styling.
+    // fn style(&mut self,commands: &[StyleCommand]);
 }
