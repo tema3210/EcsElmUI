@@ -11,14 +11,15 @@ pub struct Style {
 }
 
 /// An (x,y) point
-#[derive(Clone,Copy)]
+#[derive(Clone,Copy,Hash,Eq, PartialEq)]
 pub struct Point(u32,u32);
 
 /// An RGBA color
-#[derive(Clone,Copy)]
+#[derive(Clone,Copy,Hash,Eq, PartialEq)]
 pub struct RGBAColor(u8,u8,u8,u8);
 
 /// An abstract, dependent color
+// TODO: maybe make bgc to be some kind of fragment shader?
 #[derive(Clone,Copy)]
 pub enum Color {
     Plain(RGBAColor),
@@ -44,14 +45,6 @@ pub enum Filling<H: Host + ?Sized> {
     Empty(Color),
 }
 
-//A side and how much space we want to cut off.
-pub enum CarveCommand {
-    Up(f32),
-    Down(f32),
-    Left(f32),
-    Right(f32),
-}
-
 #[derive(Copy,Clone)]
 pub struct Viewport {
     pub height: u32,
@@ -65,7 +58,7 @@ impl Viewport {
     }
 }
 
-// TODO: maybe make bgc to be some kind of fragment shader?
+
 pub struct Layout<H: Host + ?Sized> {
     /// Size
     pub dims: Viewport,
@@ -87,19 +80,24 @@ pub enum StyleChange<'p> {
         what: &'p std::path::Path,
         new_weight: u16,
     },
+    AppendStyle {
+        /// A path to modified style
+        what: &'p std::path::Path,
+        style: Style,
+    }
 }
 
-pub struct StyleShadow<'p>(&'p std::path::Path);
+pub struct StyleShadow<'p>(pub &'p std::path::Path);
 
 /// This is scoped API.
 pub trait StyleTable {
-    fn get(&self, which: &std::path::Path) -> Style;
+    fn get(&self, which: &std::path::Path) -> Option<Style>;
     fn update(&mut self, cmd: StyleChange);
     fn scope(&mut self, shadow_commands: &[StyleShadow]) -> Box<dyn StyleTable>;
 }
 
-#[derive(Clone)]
-pub struct Anchor(std::borrow::Cow<'static,str>, Point);
+#[derive(Clone,Hash,Eq, PartialEq)]
+pub struct Anchor(pub std::borrow::Cow<'static,str>, pub Point);
 
 impl Anchor {
     fn from<S: Into<String>>(s: S,p: Point) -> Self {
@@ -118,13 +116,14 @@ impl Deref for Anchor {
     }
 }
 
-
-/// this is API for restricted access to rendering process
+/// this is API for rendering components onto anchors
 pub trait Renderer<H: Host + ?Sized> {
     /// Get a set of anchors, to which we attach layouts
     fn anchors(&mut self) -> &[Anchor];
     /// We attach layouts to labels
     fn layout(&mut self, layout: Layout<H>, label: Anchor, z_index: u32);
-    // /// Here we can modify styling.
-    // fn style(&mut self,commands: &[StyleCommand]);
+    /// Here we can interact with styling.
+    fn style(&mut self) -> &mut dyn StyleTable;
+    /// Set styling scope for consuming by underlying drawing process
+    fn set_style_scope(&mut self, scope: Option<Box<dyn StyleTable>>);
 }

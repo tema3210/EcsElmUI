@@ -3,7 +3,6 @@ use std::future::Future;
 pub mod render;
 
 //TODO: add a way to draw an app.
-//todo: support styling?
 pub trait Host {
     /// A type used to identify entities
     type Index;
@@ -12,7 +11,7 @@ pub trait Host {
     /// A type of style table
     type EntityView: View<Self>;
 
-    /// Allocate a unique, un occupied index
+    /// Allocate a unique, unoccupied index
     fn allocate_entity(&mut self) -> Result<Self::Index,crate::errors::traits::AllocError>;
     /// Setups required data for entity
     fn set_entity_data(&mut self,which: Self::Index, data: Self::EntityView);
@@ -27,9 +26,10 @@ pub trait Host {
 
 pub trait View<H: Host + ?Sized> {
     fn anchors(&self) -> &[render::Anchor];
-    fn set_layout(&mut self,anc: render::Anchor,filling: render::Filling<H>);
+    fn set_layout(&mut self,anc: render::Anchor,filling: Option<render::Layout<H>>);
     fn viewport(&self) -> render::Viewport;
-    fn get_style_table(&self) -> &mut dyn render::StyleTable;
+    fn get_style_table(&self) -> &dyn render::StyleTable;
+    fn get_style_table_mut(&mut self) -> &mut dyn render::StyleTable;
 }
 
 pub trait Hosts<S: System<Self> + ?Sized + 'static>: Host {

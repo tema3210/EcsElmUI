@@ -34,34 +34,52 @@ pub mod default {
         data_view: BTreeMap<usize,ViewData<Host>>,
         /// collection of reducer functions, one for each system
         msg_reducers: HashMap<TypeId,std::sync::Arc<dyn Fn(&mut Self)>>,
-
+        /// collection of Future resolvers
         future_delivery: HashMap<TypeId,std::sync::Arc<dyn Fn(&mut TypeMap,&mut EntityStorage)>>,
         /// a futures runtime.
         runtime: futures::executor::ThreadPool,
     }
 
+    mod default_style_table;
+
     pub struct ViewData<H: crate::traits::Host> {
-        anchors: std::collections::HashMap<render::Anchor,Option<render::Filling<H>>>,
+        // a list of anchors
+        anchors: Vec<render::Anchor>,
+        // a map from anchor, to its layout, it the last is set
+        layouts: HashMap<render::Anchor,render::Layout<H>>,
+        // an original size of view
         vp: render::Viewport,
-        //todo: add styling table
+        // a table of styles
+        styles: default_style_table::DefaultStyleTable,
     }
 
-    //todo: implement
+
     impl<H: crate::traits::Host> crate::traits::View<H> for ViewData<H> {
         fn anchors(&self) -> &[Anchor] {
-            unimplemented!()
+            &self.anchors[..]
         }
 
-        fn set_layout(&mut self, anc: Anchor, filling: Filling<H>) {
-            unimplemented!()
+        fn set_layout(&mut self, anc: Anchor, filling: Option<render::Layout<H>>) {
+            if self.anchors.iter().find(|&i| i.0  == anc.0).is_some() {
+                if let Some(filling) = filling {
+                    self.layouts.insert(anc, filling);
+                } else {
+                    self.layouts.remove(&anc);
+                }
+            }
+            //Do nothing if smth. tries to fill non existent anchor
         }
 
         fn viewport(&self) -> Viewport {
-            unimplemented!()
+            self.vp
         }
 
-        fn get_style_table(&self) -> &mut dyn StyleTable {
-            unimplemented!()
+        fn get_style_table(&self) -> &dyn StyleTable {
+            &self.styles as &dyn StyleTable
+        }
+
+        fn get_style_table_mut(&mut self) -> &mut dyn StyleTable {
+            &mut self.styles as &mut dyn StyleTable
         }
     }
 
@@ -267,11 +285,11 @@ pub mod default {
             res.ok_or(AllocError)
         }
 
-        //todo: implement
         fn set_entity_data(&mut self, which: Self::Index, data: ViewData<Self>) {
-            unimplemented!()
+            self.data_view.insert(which,data);
         }
 
+        // todo: clean the data stored in accounting structures
         fn drop_entity(&mut self, which: Self::Index) {
             const HALFWORD: u8 = (usize::BITS / 2) as u8;
             const MASK: usize = usize::MAX >> HALFWORD;
@@ -282,7 +300,9 @@ pub mod default {
                 BEntry::Occupied(mut e) => {
                     let bm = e.get_mut();
                     bm.set(right,false);
+                    /// clean up
                     self.data.remove(&which);
+                    self.data_view.remove(&which);
                 }
             }
         }
