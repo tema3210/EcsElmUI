@@ -1,8 +1,6 @@
 use crate::traits::Host;
 use std::ops::Deref;
 
-pub struct Font;
-
 /// StyleData
 #[derive(Clone,Copy)]
 pub struct Style {
@@ -24,15 +22,6 @@ pub struct RGBAColor(u8,u8,u8,u8);
 pub enum Color {
     Plain(RGBAColor),
     Functional(fn(Point)->RGBAColor)
-}
-
-pub trait Painter {
-    fn line(&mut self, point1: Point,point2: Point, color: Color);
-    fn bezier_curve(&mut self, points: &[Point], color: Color);
-
-    fn text<'s,'c: 's>(&'s mut self,text: &'s str, font: &'c Font, color: Color, at: Point);
-    fn rectangle(&mut self,left_upper: Point,right_lower: Point, fill: Color);
-    fn figure(&mut self, points: Vec<Point>, at: Point, fill: Color);
 }
 
 //Command to place something in the layout

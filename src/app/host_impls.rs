@@ -26,12 +26,14 @@ pub mod default {
     pub struct Host {
         /// free ids
         ids: BTreeMap<u32,bitmaps::Bitmap<1024>>,
+        /// root id
+        root: Option<usize>,
         /// global states of systems
         states: typemap::TypeMap,
         /// a map from entities to their components, event filters
         data: EntityStorage,
         /// a map from entities to their views
-        data_view: BTreeMap<usize,ViewData<Host>>,
+        data_view: BTreeMap<usize,Vec<(usize,ViewData<Host>)>>,
         /// collection of reducer functions, one for each system
         msg_reducers: HashMap<TypeId,std::sync::Arc<dyn Fn(&mut Self)>>,
         /// collection of Future resolvers
@@ -52,7 +54,6 @@ pub mod default {
         // a table of styles
         styles: default_style_table::DefaultStyleTable,
     }
-
 
     impl<H: crate::traits::Host> crate::traits::View<H> for ViewData<H> {
         fn anchors(&self) -> &[Anchor] {
@@ -180,6 +181,7 @@ pub mod default {
                 .create().expect("failed to create a thread pool");
             Self {
                 ids: BTreeMap::new(),
+                root: None,
                 states: typemap::TypeMap::new(),
                 data: BTreeMap::new(),
                 data_view: Default::default(),
@@ -285,8 +287,24 @@ pub mod default {
             res.ok_or(AllocError)
         }
 
-        fn set_entity_data(&mut self, which: Self::Index, data: ViewData<Self>) {
-            self.data_view.insert(which,data);
+        fn set_entity_data(&mut self, which: Self::Index, data: ViewData<Self>,portal: usize) {
+            match self.data_view.entry(which) {
+                BEntry::Occupied(mut e) => {
+                    let e = e.get_mut();
+                    if let Some(pos) = e.iter_mut().find(|(ind,_)| *ind == portal) {
+                        pos.1  = data;
+                    } else {
+                        e.push((portal,data));
+                    }
+                },
+                BEntry::Vacant(mut e) => {
+                    e.insert(vec![(portal,data)] );
+                }
+            }
+        }
+
+        fn set_root_entity(&mut self, index: Self::Index) {
+            self.root = Some(index);
         }
 
         // todo: clean the data stored in accounting structures
@@ -306,6 +324,17 @@ pub mod default {
                 }
             }
         }
+
+        fn get_root_portal_count(&self) -> usize {
+            let root = self.root.unwrap();
+            self.data_view[root].len()
+        }
+
+        //todo: make it to work
+        fn render(&self, screen_idx: usize, by: ()) {
+            unimplemented!()
+        }
+
         //TODO: think of dispatch between currently rendered components
         fn receive_events(&mut self, events: &[Self::Event]) {
             for (_,(tm,f)) in self.data.iter_mut() {

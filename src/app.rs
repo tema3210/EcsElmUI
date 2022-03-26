@@ -10,6 +10,7 @@ use winit::{
 
 pub mod host_impls;
 
+//todo: make this generic over the host + all consequences
 pub struct Application {
     vp: Viewport,
     host: host_impls::default::Host,

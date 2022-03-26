@@ -2,7 +2,6 @@ use std::future::Future;
 
 pub mod render;
 
-//TODO: add a way to draw an app.
 pub trait Host {
     /// A type used to identify entities
     type Index;
@@ -13,11 +12,18 @@ pub trait Host {
 
     /// Allocate a unique, unoccupied index
     fn allocate_entity(&mut self) -> Result<Self::Index,crate::errors::traits::AllocError>;
-    /// Setups required data for entity
-    fn set_entity_data(&mut self,which: Self::Index, data: Self::EntityView);
+    /// Setups required data for entity's render, for each portal
+    fn set_entity_data(&mut self,which: Self::Index, data: Self::EntityView, portal: usize);
+    /// Set root entity
+    /// Calling render method without this being first is UB
+    fn set_root_entity(&mut self,index: Self::Index);
     /// Deallocate given index
     fn drop_entity(&mut self,which: Self::Index);
 
+    /// Get roots's portal count
+    fn get_root_portal_count(&self) -> usize;
+    /// Function to render an entity's portal on a window todo: make an API for rendering on windows
+    fn render(&self,screen_idx: usize, by: ());
     /// Dispatch a batch of events
     fn receive_events(&mut self,events: &[Self::Event]);
     /// Run one update round
@@ -64,8 +70,6 @@ pub trait System<H: Host + Hosts<Self> + ?Sized>: 'static + Unpin + Sized {
     fn changed(this: Option<&mut Self>,props: &Self::Props) -> Option<Self>;
     /// Note: Global state of the system can be accessed via a ctx
     fn update<'s,'h: 's>(&'s mut self,msg: Self::Message, ctx: &mut impl Context<'h,H>) where 'h: 's;
-    /// This should return the number of different views of the component.
-    fn count_views(&self) -> usize;
     /// Draw a component; viewport describes boundaries of a component, view_index is the number of view we are going to draw
     fn view<'v>(&'v self,renderer: &'v mut dyn render::Renderer<H>,viewport: render::Viewport,view_index: usize);
 }
