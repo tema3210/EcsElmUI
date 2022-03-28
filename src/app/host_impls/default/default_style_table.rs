@@ -1,16 +1,16 @@
 use std::path::{Path,PathBuf};
-use crate::traits::render::{StyleShadow, StyleChange, Style, StyleTable};
+use crate::traits::{Host,render::{StyleShadow, StyleChange, Style, StyleTable}};
 use std::collections::HashMap;
 use std::borrow::Borrow;
 
 type RcCell<T> = std::rc::Rc<std::cell::RefCell<T>>;
 
-pub struct DefaultStyleTable {
-    inner: RcCell<Inner>,
+pub struct DefaultStyleTable<H: Host + ?Sized> {
+    inner: RcCell<Inner<H>>,
 }
 
-impl DefaultStyleTable {
-    fn new<'p>(data: impl Iterator<Item = (&'p Path,Style)>) -> Self {
+impl<H: Host + ?Sized> DefaultStyleTable<H> {
+    fn new<'p>(data: impl Iterator<Item = (&'p Path,Style<H>)>) -> Self {
         let mut inner = Inner {previous: None, rules: Default::default()};
         for (p,s) in data {
             inner.rules.insert(p.to_owned(),Some(s));
@@ -19,32 +19,40 @@ impl DefaultStyleTable {
     }
 }
 
-impl StyleTable for DefaultStyleTable {
-    fn get(&self, which: &Path) -> Option<Style> {
+impl<H: Host + ?Sized + 'static> StyleTable<H> for DefaultStyleTable<H> {
+    fn get(&self, which: &Path) -> Option<Style<H>> {
         std::cell::RefCell::borrow(&*self.inner).get(which)
     }
 
-    fn update(&mut self, cmd: StyleChange) {
+    fn update(&mut self, cmd: StyleChange<H>) {
         Inner::update(&mut self.inner,cmd)
     }
 
-    fn scope(&mut self, shadow_commands: &[StyleShadow]) -> Box<dyn StyleTable> {
+    fn scope(&mut self, shadow_commands: &[StyleShadow]) -> Box<dyn StyleTable<H>> {
         Box::new(Self { inner: Inner::scope(&mut self.inner,shadow_commands)})
     }
 }
 
-#[derive(Default)]
-struct Inner {
+struct Inner<H: Host + ?Sized> {
     // `None` if it is root
     previous: Option<RcCell<Self>>,
     //if key contains `None` - it has been shadowed
-    rules: HashMap<PathBuf,Option<Style>>,
+    rules: HashMap<PathBuf,Option<Style<H>>>,
 }
 
-impl Inner {
-    fn get(&self, which: &Path) -> Option<Style> {
+impl<H: Host + ?Sized> Default for Inner<H> {
+    fn default() -> Self {
+        Self {previous: None, rules: Default::default()}
+    }
+}
+
+impl<H: Host + ?Sized> Inner<H> {
+    fn get(&self, which: &Path) -> Option<Style<H>> {
         match self.rules.get(which) {
-            Some(Some(style)) => Some(*style),
+            Some(Some(style)) => {
+                let ret = (*style).clone();
+                Some(ret)
+            },
             Some(None) => {
                 if let Some(previous) = &self.previous {
                     std::cell::RefCell::borrow(&*previous).get(which)
@@ -65,7 +73,7 @@ impl Inner {
         std::rc::Rc::new(std::cell::RefCell::new(new))
     }
 
-    fn update(this: &mut RcCell<Self>, cmd: StyleChange) {
+    fn update(this: &mut RcCell<Self>, cmd: StyleChange<H>) {
         let mut this = this.borrow_mut();
         match cmd {
             StyleChange::OverwriteColor { what,color } => {

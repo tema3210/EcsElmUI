@@ -48,22 +48,22 @@ pub mod default {
         // a list of anchors
         anchors: Vec<render::Anchor>,
         // a map from anchor, to its layout, it the last is set
-        layouts: HashMap<render::Anchor,render::Layout<H>>,
+        layouts: HashMap<render::Anchor,(render::Layout<H>,render::ZIndex)>,
         // an original size of view
         vp: render::Viewport,
         // a table of styles
-        styles: default_style_table::DefaultStyleTable,
+        styles: default_style_table::DefaultStyleTable<H>,
     }
 
-    impl<H: crate::traits::Host> crate::traits::View<H> for ViewData<H> {
+    impl<H: crate::traits::Host + 'static> crate::traits::View<H> for ViewData<H> {
         fn anchors(&self) -> &[Anchor] {
             &self.anchors[..]
         }
 
-        fn set_layout(&mut self, anc: Anchor, filling: Option<render::Layout<H>>) {
+        fn set_layout(&mut self, anc: Anchor, filling: Option<render::Layout<H>>,z_index: render::ZIndex) {
             if self.anchors.iter().find(|&i| i.0  == anc.0).is_some() {
                 if let Some(filling) = filling {
-                    self.layouts.insert(anc, filling);
+                    self.layouts.insert(anc, (filling,z_index));
                 } else {
                     self.layouts.remove(&anc);
                 }
@@ -75,12 +75,12 @@ pub mod default {
             self.vp
         }
 
-        fn get_style_table(&self) -> &dyn StyleTable {
-            &self.styles as &dyn StyleTable
+        fn get_style_table(&self) -> &dyn StyleTable<H> {
+            &self.styles as &dyn StyleTable<H>
         }
 
-        fn get_style_table_mut(&mut self) -> &mut dyn StyleTable {
-            &mut self.styles as &mut dyn StyleTable
+        fn get_style_table_mut(&mut self) -> &mut dyn StyleTable<H> {
+            &mut self.styles as &mut dyn StyleTable<H>
         }
     }
 
@@ -255,12 +255,26 @@ pub mod default {
             }
         }
     }
+    //todo: remove
+    mod stub {
+        #[derive(Clone,Copy)]
+        pub struct Color;
+
+        pub struct Primitive;
+
+        impl super::render::Primitive for Primitive {
+            type Color = Color;
+        }
+    }
 
     impl crate::traits::Host for Host {
         type Index = usize;
 
         type Event = winit::event::WindowEvent<'static>;
-        type EntityView = ViewData<Host>;
+
+        type EntityData = ViewData<Host>;
+        //todo: implement
+        type Primitive = stub::Primitive;
 
         fn allocate_entity(&mut self) -> Result<Self::Index, crate::errors::traits::AllocError> {
             const HALFWORD: u8 = (usize::BITS / 2) as u8;
@@ -327,11 +341,11 @@ pub mod default {
 
         fn get_root_portal_count(&self) -> usize {
             let root = self.root.unwrap();
-            self.data_view[root].len()
+            self.data_view[&root].len()
         }
 
         //todo: make it to work
-        fn render(&self, screen_idx: usize, by: ()) {
+        fn render(&self, screen_idx: usize, by: impl FnOnce(Self::Primitive)) {
             unimplemented!()
         }
 

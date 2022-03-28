@@ -2,11 +2,22 @@ use crate::traits::Host;
 use std::ops::Deref;
 
 /// StyleData
-#[derive(Clone,Copy)]
-pub struct Style<H: Host + ?Sized> {
+pub struct Style<H: crate::traits::Host + ?Sized> {
     pub weight: u16,
-    pub color: <<H as Host>::Primitive as Primitive>::Color,
+    pub color: <<H as crate::traits::Host>::Primitive as Primitive>::Color,
 }
+
+impl<H: Host + ?Sized> Clone for Style<H> {
+    fn clone(&self) -> Self {
+        Self {
+            weight: self.weight,
+            color: self.color,
+        }
+    }
+}
+
+impl<H: Host + ?Sized> Copy for Style<H> {}
+
 
 /// An (x,y) point
 #[derive(Clone,Copy,Hash,Eq, PartialEq)]
@@ -40,7 +51,7 @@ pub trait Visitor<P: Primitive> {
 }
 /// A collection of types for render necessary things
 pub trait Primitive {
-    type Color;
+    type Color: Copy;
 }
 
 #[derive(Copy,Clone)]
