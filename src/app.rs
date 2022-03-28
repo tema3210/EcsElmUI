@@ -2,6 +2,8 @@ pub use crate::traits::render::Viewport;
 use std::collections::{BTreeMap, HashMap};
 use std::ops::Add;
 
+use crate::traits::Host;
+
 use winit::{
     event::{Event,WindowEvent},
     event_loop::{ControlFlow, EventLoop},
@@ -10,16 +12,18 @@ use winit::{
 
 pub mod host_impls;
 
-//todo: make this generic over the host + all consequences
-pub struct Application {
+//todo: fill this with wgpu states
+pub struct Application<H: Host<Event = WindowEvent<'static>>>
+{
     vp: Viewport,
-    host: host_impls::default::Host,
+    host: H,
 }
 
 //TODO: finish this: make wgpu and host to work
-impl Application {
+impl<H: Host<Event = WindowEvent<'static>>> Application<H> {
+
     pub fn new(vp: Viewport) -> Self {
-        Self{ vp, host: host_impls::default::Host::new() }
+        unimplemented!()
     }
 
     pub fn run(&mut self) {

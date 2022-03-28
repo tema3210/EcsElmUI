@@ -9,8 +9,6 @@ edition = "2021"
 winit = "0.26.1"
 wgpu = "0.12.0"
 
-pollster = "0.2"
-
 bitmaps = "3.1.0"
 cfg-if = "1"
 typemap ="0.3.3"

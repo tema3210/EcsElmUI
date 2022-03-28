@@ -2,28 +2,33 @@ use std::future::Future;
 
 pub mod render;
 
+
+//TODO: think of an asset server
 pub trait Host {
     /// A type used to identify entities
     type Index;
     /// A type of events used by this host
     type Event;
-    /// A type of style table
-    type EntityView: View<Self>;
+    /// A type of data used to initialize an entity
+    type EntityData: View<Self>;
+    /// A type which will be collected and presented into applications rendered
+    type Primitive: render::Primitive;
 
     /// Allocate a unique, unoccupied index
     fn allocate_entity(&mut self) -> Result<Self::Index,crate::errors::traits::AllocError>;
     /// Setups required data for entity's render, for each portal
-    fn set_entity_data(&mut self,which: Self::Index, data: Self::EntityView, portal: usize);
+    fn set_entity_data(&mut self, which: Self::Index, data: Self::EntityData, portal: usize);
     /// Set root entity
     /// Calling render method without this being first is UB
     fn set_root_entity(&mut self,index: Self::Index);
     /// Deallocate given index
     fn drop_entity(&mut self,which: Self::Index);
 
-    /// Get roots's portal count
+    /// Get roots portal count
     fn get_root_portal_count(&self) -> usize;
-    /// Function to render an entity's portal on a window todo: make an API for rendering on windows
-    fn render(&self,screen_idx: usize, by: ());
+    /// Function to render an entity's portal on a window
+    fn render(&self,screen_idx: usize, by: impl FnOnce(Self::Primitive))
+        where render::Layout<Self>: render::Visitor<Self::Primitive>;
     /// Dispatch a batch of events
     fn receive_events(&mut self,events: &[Self::Event]);
     /// Run one update round
@@ -32,10 +37,10 @@ pub trait Host {
 
 pub trait View<H: Host + ?Sized> {
     fn anchors(&self) -> &[render::Anchor];
-    fn set_layout(&mut self,anc: render::Anchor,filling: Option<render::Layout<H>>);
+    fn set_layout(&mut self,anc: render::Anchor,filling: Option<render::Layout<H>>, z_index: render::ZIndex);
     fn viewport(&self) -> render::Viewport;
-    fn get_style_table(&self) -> &dyn render::StyleTable;
-    fn get_style_table_mut(&mut self) -> &mut dyn render::StyleTable;
+    fn get_style_table(&self) -> &dyn render::StyleTable<H>;
+    fn get_style_table_mut(&mut self) -> &mut dyn render::StyleTable<H>;
 }
 
 pub trait Hosts<S: System<Self> + ?Sized + 'static>: Host {
@@ -56,7 +61,7 @@ pub trait GlobalState<H: Host + ?Sized>: Sized + 'static {
     fn update(&mut self, f: impl FnOnce(Self)->Self);
 }
 
-//todo: think of bundles (aka Systems which depend on other Systems)
+/// bundles are done via restricting generics in systems implementation by adding `Hosts<Other System Type>`
 pub trait System<H: Host + Hosts<Self> + ?Sized>: 'static + Unpin + Sized {
     /// inner message
     type Message: 'static + Send + Unpin;
