@@ -359,6 +359,7 @@ pub mod default {
                 }
             }
         }
+        //todo: add a tree forming
         fn update_round(&mut self) {
             let reducers: Vec<_> = self.msg_reducers.values().cloned().collect();
             for red in reducers {

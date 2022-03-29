@@ -33,6 +33,7 @@ pub trait Host {
     fn receive_events(&mut self,events: &[Self::Event]);
     /// Run one update round
     fn update_round(&mut self);
+    //todo: add an interpret function for loading app state from some data structure
 }
 
 pub trait View<H: Host + ?Sized> {
