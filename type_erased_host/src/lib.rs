@@ -1,27 +1,30 @@
-pub mod default {
-    use crate::traits::{Hosts, System};
-    use std::any::{Any, TypeId};
-    use std::collections::{BTreeMap,HashMap};
-    use crate::traits::{Context, GlobalState};
-    use std::future::Future;
-    use crate::errors::traits::{AllocError,ReduceError};
-    use futures::task::SpawnExt;
-    use futures::{FutureExt, TryFutureExt, StreamExt};
-    use std::marker::PhantomData;
-    use typemap::{Entry, TypeMap};
-    use std::convert::TryFrom;
-    use bitmaps::Bitmap;
-    use std::collections::btree_map::Entry as BEntry;
-    use std::collections::hash_map::Entry as HEntry;
-    use winit::event::WindowEvent;
-    use std::task::{Poll, Waker, RawWaker, RawWakerVTable};
-    use std::pin::Pin;
-    use winit::event::VirtualKeyCode::Wake;
-    use std::sync::Arc;
-    use std::path::Path;
-    use crate::traits::render::{StyleShadow, StyleChange, Style, StyleTable,Anchor,Viewport,Filling,self};
+extern crate typemap;
+extern crate types;
+extern crate futures;
 
-    type EntityStorage = BTreeMap<usize,(typemap::TypeMap, ProcessingFunctionsEntity)>;
+use std::any::{Any, TypeId};
+use std::collections::{BTreeMap,HashMap};
+use std::future::Future;
+use types::traits::{System, Hosts,Host as HostTrait,Context, GlobalState};
+use types::errors::traits::{AllocError,ReduceError};
+use futures::task::SpawnExt;
+use futures::{FutureExt, TryFutureExt, StreamExt};
+use std::marker::PhantomData;
+use typemap::{Entry, TypeMap};
+use std::convert::TryFrom;
+use bitmaps::Bitmap;
+use std::collections::btree_map::Entry as BEntry;
+use std::collections::hash_map::Entry as HEntry;
+use winit::event::WindowEvent;
+use std::task::{Poll, Waker, RawWaker, RawWakerVTable};
+use std::pin::Pin;
+use winit::event::VirtualKeyCode::Wake;
+use std::sync::Arc;
+use std::path::Path;
+use types::render::{Anchor, Viewport, StyleTable,self};
+
+
+type EntityStorage = BTreeMap<usize,(typemap::TypeMap, ProcessingFunctionsEntity)>;
 
     pub struct Host {
         /// free ids
@@ -42,9 +45,7 @@ pub mod default {
         runtime: futures::executor::ThreadPool,
     }
 
-    mod default_style_table;
-
-    pub struct ViewData<H: crate::traits::Host> {
+    pub struct ViewData<H: types::traits::Host> {
         // a list of anchors
         anchors: Vec<render::Anchor>,
         // a map from anchor, to its layout, it the last is set
@@ -55,7 +56,7 @@ pub mod default {
         styles: default_style_table::DefaultStyleTable<H>,
     }
 
-    impl<H: crate::traits::Host + 'static> crate::traits::View<H> for ViewData<H> {
+    impl<H: types::traits::Host + 'static> types::traits::View<H> for ViewData<H> {
         fn anchors(&self) -> &[Anchor] {
             &self.anchors[..]
         }
@@ -86,7 +87,7 @@ pub mod default {
 
     /// the functions to interact with systems in type erased setting
     struct ProcessingFunctionsEntity {
-        event_dispatch: Box<dyn for<'s> Fn(&'s <Host as crate::traits::Host>::Event,&'s mut typemap::TypeMap)>,
+        event_dispatch: Box<dyn for<'s> Fn(&'s <Host as types::traits::Host>::Event,&'s mut typemap::TypeMap)>,
         // poll_fn: Box<dyn for<'s> Fn(&'s mut typemap::TypeMap)>,
     }
 
@@ -106,7 +107,7 @@ pub mod default {
             self.messages.push(msg);
         }
 
-        fn reduce<'a>(&'a mut self,ctx: &mut impl crate::traits::Context<'a,Host>) {
+        fn reduce<'a>(&'a mut self,ctx: &mut impl types::traits::Context<'a,Host>) {
             let mut vec = Vec::new();
             std::mem::swap(&mut vec, &mut self.messages);
             for i in vec {
@@ -257,6 +258,8 @@ pub mod default {
     }
     //todo: remove
     mod stub {
+        use types::render::Rect;
+
         #[derive(Clone,Copy)]
         pub struct Color;
 
@@ -264,10 +267,22 @@ pub mod default {
 
         impl super::render::Primitive for Primitive {
             type Color = Color;
+
+            fn copy_from(&mut self, place: Rect, src: Self) {
+                unimplemented!()
+            }
+
+            fn cut(&self, part: Rect) -> Self {
+                unimplemented!()
+            }
+
+            fn resize(&self, scale: (f32, f32)) -> Self {
+                unimplemented!()
+            }
         }
     }
 
-    impl crate::traits::Host for Host {
+    impl types::traits::Host for Host {
         type Index = usize;
 
         type Event = winit::event::WindowEvent<'static>;
@@ -276,7 +291,7 @@ pub mod default {
         //todo: implement
         type Primitive = stub::Primitive;
 
-        fn allocate_entity(&mut self) -> Result<Self::Index, crate::errors::traits::AllocError> {
+        fn allocate_entity(&mut self) -> Result<Self::Index, types::errors::traits::AllocError> {
             const HALFWORD: u8 = (usize::BITS / 2) as u8;
             const MASK: usize = usize::MAX >> HALFWORD;
 
@@ -372,7 +387,7 @@ pub mod default {
         }
     }
 
-    impl<S: crate::traits::System<Self>> Hosts<S> for Host
+    impl<S: types::traits::System<Self>> Hosts<S> for Host
     {
         fn get_state(&mut self, which: Self::Index) -> Option<&mut S> {
             self.data.get_mut(&which).map(|(tm,_)|{
@@ -464,7 +479,7 @@ pub mod default {
         msgs: Box<dyn Any>,
     }
 
-    impl<'h> crate::traits::Context<'h,Host> for HostCtx<'h> {
+    impl<'h> types::traits::Context<'h, Host> for HostCtx<'h> {
         fn get_host(&mut self) -> &mut Host {
             self.host
         }
@@ -483,7 +498,7 @@ pub mod default {
             }
         }
 
-        fn subscribe<S: System<Host>>(&mut self, filter: fn(&<Host as crate::traits::Host>::Event) -> Option<<S as System<Host>>::Message>) where Host: Hosts<S> {
+        fn subscribe<S: System<Host>>(&mut self, filter: fn(&<Host as types::traits::Host>::Event) -> Option<<S as System<Host>>::Message>) where Host: Hosts<S> {
             let index = self.cur_index;
             let reducer = move |ev: &winit::event::WindowEvent<'static>,e_data: &mut typemap::TypeMap| -> () {
                 if let Some(m) = filter(ev) {
@@ -516,4 +531,4 @@ pub mod default {
             })
         }
     }
-}
+

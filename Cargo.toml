@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["types"]
+members = ["types","type_erased_host","default_style_table"]
 
 [profile.dev.package."*"]
 opt-level = 1

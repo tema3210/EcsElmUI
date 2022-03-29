@@ -1,15 +1,9 @@
 [package]
-name = "types"
-version = "0.0.1"
+name = "default_style_table"
+version = "0.1.0"
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-winit = "0.26.1"
-wgpu = "0.12.0"
-
-[[bin]]
-name = "test"
-test = false
-bench = false
+"types" = { path = "../types" }

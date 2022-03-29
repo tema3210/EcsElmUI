@@ -1,7 +1,6 @@
 use std::future::Future;
 
-pub mod render;
-
+use crate::render;
 
 //TODO: think of an asset server
 pub trait Host {

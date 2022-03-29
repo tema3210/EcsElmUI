@@ -1,4 +1,4 @@
-pub use crate::traits::render::Viewport;
+use crate::render::Viewport;
 use std::collections::{BTreeMap, HashMap};
 use std::ops::Add;
 
@@ -10,7 +10,6 @@ use winit::{
     window::WindowBuilder,
 };
 
-pub mod host_impls;
 
 //todo: fill this with wgpu states
 pub struct Application<H: Host<Event = WindowEvent<'static>>>

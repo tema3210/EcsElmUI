@@ -1,5 +1,7 @@
-use std::path::{Path,PathBuf};
-use crate::traits::{Host,render::{StyleShadow, StyleChange, Style, StyleTable}};
+extern crate types;
+
+use std::path::{Path, PathBuf};
+use types::{traits::Host,render::{StyleShadow, StyleChange, Style, StyleTable}};
 use std::collections::HashMap;
 use std::borrow::Borrow;
 
