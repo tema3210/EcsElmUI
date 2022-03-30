@@ -20,12 +20,14 @@ impl<H: Host + ?Sized> Copy for Style<H> {}
 
 
 /// An (x,y) point
+/// * Integer types serve for absolute screen space addressing
+/// * FP types server for logical addressing
 #[derive(Clone,Copy,Hash,Eq, PartialEq)]
-pub struct Point(u32,u32);
+pub struct Point<T = u32>(T,T);
 
 /// An rectangular of format (upper left corner,down right corner)
 #[derive(Clone,Copy,Hash,Eq, PartialEq)]
-pub struct Rect(Point,Point);
+pub struct Rect<L = u32,R =u32>(Point<L>,Point<R>);
 
 /// This is the type for describing level of a layout
 /// Note, actual z-index used in rendering may differ from logical one because of portals, etc.
@@ -49,9 +51,11 @@ pub enum Filling<H: Host + ?Sized> {
 }
 
 /// An Visitor for producing renderable primitives
-/// todo: is THIS enough?
 pub trait Visitor<P: Primitive> {
-    fn visit(&self, result: &mut P);
+    /// A type for ctx of visitor
+    type Ctx: Default;
+
+    fn visit(&self, result: &mut P, ctx: &mut Self::Ctx);
 }
 
 /// An edge of a Primitive
@@ -62,7 +66,7 @@ pub enum Edge {
     DownRight,
 }
 
-/// A collection of types for render necessary things
+/// A collection of types and methods for render necessary things
 /// todo: think of introducing physical vs logical coordinates =>  logical
 pub trait Primitive {
     type Color: Copy;
@@ -70,12 +74,13 @@ pub trait Primitive {
     /// * In case of `src` being smaller than `place` scaling up takes a place;
     /// * In case of `src` being larger than `place` `src` is first resized to fit given place
     fn copy_from(&mut self,place: Rect,src: Self);
-    /// Copy a part of texture
+    /// Copy a part of primitive
     fn cut(&self,part: Rect) -> Self;
     /// Rescale a primitive; `scale` is FP32 vec2.
     fn resize(&self,scale: (f32,f32)) -> Self;
 }
 
+/// A data structure describing absolute size of some part of screen space
 #[derive(Copy,Clone)]
 pub struct Viewport {
     pub height: u32,
@@ -146,12 +151,12 @@ impl Deref for Anchor {
     }
 }
 
-/// this is API for rendering components onto anchors
+/// this is API for placing components onto anchors
 pub trait Renderer<H: Host + ?Sized> {
     /// Get a set of anchors, to which we attach layouts
     fn anchors(&mut self) -> &[Anchor];
     /// We attach layouts to labels
-    fn layout(&mut self, layout: Layout<H>, label: Anchor, z_index: u32);
+    fn layout(&mut self, layout: Layout<H>, label: Anchor, z_index: ZIndex);
     /// Here we can interact with styling.
     fn style(&mut self) -> &mut dyn StyleTable<H>;
     /// Set styling scope for consuming by underlying drawing process

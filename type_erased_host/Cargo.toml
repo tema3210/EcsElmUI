@@ -7,7 +7,7 @@ edition = "2021"
 
 [dependencies]
 "types" = { path = "../types" }
-"default_style_table" = {path="../default_style_table"}
+"default_style_table" = { path="../default_style_table" }
 
 winit = "0.26.1"
 wgpu = "0.12.0"

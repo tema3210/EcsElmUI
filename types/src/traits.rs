@@ -16,7 +16,7 @@ pub trait Host {
     /// Allocate a unique, unoccupied index
     fn allocate_entity(&mut self) -> Result<Self::Index,crate::errors::traits::AllocError>;
     /// Setups required data for entity's render, for each portal
-    fn set_entity_data(&mut self, which: Self::Index, data: Self::EntityData, portal: usize);
+    fn set_entity_data(&mut self, which: Self::Index, data: impl Into<Self::EntityData>, portal: usize);
     /// Set root entity
     /// Calling render method without this being first is UB
     fn set_root_entity(&mut self,index: Self::Index);
@@ -27,12 +27,16 @@ pub trait Host {
     fn get_root_portal_count(&self) -> usize;
     /// Function to render an entity's portal on a window
     fn render(&self,screen_idx: usize, by: impl FnOnce(Self::Primitive))
-        where render::Layout<Self>: render::Visitor<Self::Primitive>;
+        where Self::EntityData: render::Visitor<Self::Primitive>;
+    /// it's called when corresponding screen is resized
+    fn resize(&mut self, screen_idx: usize,vp: render::Viewport);
     /// Dispatch a batch of events
     fn receive_events(&mut self,events: &[Self::Event]);
     /// Run one update round
     fn update_round(&mut self);
-    //todo: add an interpret function for loading app state from some data structure
+
+
+    //todo: add an interpret function for loading app state from some data structure (mb not)
 }
 
 pub trait View<H: Host + ?Sized> {
