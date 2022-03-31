@@ -58,14 +58,6 @@ pub trait Visitor<P: Primitive> {
     fn visit(&self, result: &mut P, ctx: &mut Self::Ctx);
 }
 
-/// An edge of a Primitive
-pub enum Edge {
-    UpperLeft,
-    UpperRight,
-    DownLeft,
-    DownRight,
-}
-
 /// A collection of types and methods for render necessary things
 /// todo: think of introducing physical vs logical coordinates =>  logical
 pub trait Primitive {
@@ -78,6 +70,8 @@ pub trait Primitive {
     fn cut(&self,part: Rect) -> Self;
     /// Rescale a primitive; `scale` is FP32 vec2.
     fn resize(&self,scale: (f32,f32)) -> Self;
+    /// Associated function returning blank primitive;
+    fn blank() -> Self;
 }
 
 /// A data structure describing absolute size of some part of screen space
@@ -125,7 +119,9 @@ pub enum StyleChange<'p,H: Host + ?Sized> {
 pub struct StyleShadow<'p>(pub &'p std::path::Path);
 
 /// This is scoped API.
+/// todo: maybe add a method for setting previous table
 pub trait StyleTable<H: Host + ?Sized> {
+
     fn get(&self, which: &std::path::Path) -> Option<Style<H>>;
     fn update(&mut self, cmd: StyleChange<H>);
     fn scope(&mut self, shadow_commands: &[StyleShadow]) -> Box<dyn StyleTable<H>>;
@@ -153,12 +149,13 @@ impl Deref for Anchor {
 
 /// this is API for placing components onto anchors
 pub trait Renderer<H: Host + ?Sized> {
-    /// Get a set of anchors, to which we attach layouts
+    /// Get a set of anchors, to which we are allowed to attach layouts
     fn anchors(&mut self) -> &[Anchor];
     /// We attach layouts to labels
-    fn layout(&mut self, layout: Layout<H>, label: Anchor, z_index: ZIndex);
+    fn layout(&mut self, layout: Option<Layout<H>>, label: Anchor, z_index: ZIndex);
     /// Here we can interact with styling.
-    fn style(&mut self) -> &mut dyn StyleTable<H>;
-    /// Set styling scope for consuming by underlying drawing process
-    fn set_style_scope(&mut self, scope: Option<Box<dyn StyleTable<H>>>);
+    fn styles(&self) -> &dyn StyleTable<H>;
+    /// Change StyleTable entity vise, in a new scope.
+    fn patch_style_scope(&mut self, patch: &mut dyn FnMut(&mut dyn StyleTable<H>));
+
 }

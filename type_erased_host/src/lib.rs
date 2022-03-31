@@ -5,7 +5,7 @@ extern crate futures;
 use std::any::{Any, TypeId};
 use std::collections::{BTreeMap, HashMap};
 use std::future::Future;
-use types::traits::{System, Hosts, Host as HostTrait, Context, GlobalState};
+use types::traits::{System, Hosts, Host as HostTrait, Context, GlobalState, View};
 use types::errors::traits::{AllocError, ReduceError};
 use futures::task::SpawnExt;
 use futures::{FutureExt, TryFutureExt, StreamExt};
@@ -21,7 +21,7 @@ use std::pin::Pin;
 use winit::event::VirtualKeyCode::Wake;
 use std::sync::Arc;
 use std::path::Path;
-use types::render::{Anchor, Viewport, StyleTable, self, Visitor};
+use types::render::{Anchor, Viewport, StyleTable, self, Visitor, Primitive, ZIndex, Layout};
 
 /// A map from entities to their components data
 type EntityStorage = BTreeMap<usize, (typemap::TypeMap, ProcessingFunctionsEntity)>;
@@ -45,24 +45,28 @@ pub struct Host {
     msg_reducers: HashMap<TypeId, std::sync::Arc<dyn Fn(&mut Self)>>,
     /// collection of Future resolvers
     future_delivery: HashMap<TypeId, std::sync::Arc<dyn Fn(&mut TypeMap, &mut EntityStorage)>>,
+    /// a code for producing a views
+    views: BTreeMap<usize,std::sync::Arc<dyn Fn(&mut EntityViews,&mut EntityStorage)>>,
     /// a futures runtime.
     runtime: futures::executor::ThreadPool,
 }
 
 pub struct ViewData<H: types::traits::Host> {
-    // a list of anchors
+    // a list of free anchors
     anchors: Vec<render::Anchor>,
     // a map from anchor, to its layout, it the last is set
     layouts: HashMap<render::Anchor, (render::Layout<H>, render::ZIndex)>,
     // an original size of view
     vp: render::Viewport,
     // a table of styles
-    styles: default_style_table::DefaultStyleTable<H>,
+    styles: Box<dyn StyleTable<H>>,
 }
 
 //todo implement render logic
-impl types::render::Visitor<Host::Primitive> for ViewData<Host> {
-    type Ctx = ();
+impl<'a> types::render::Visitor<Host::Primitive> for ViewData<Host>
+    where Host: 'a
+{
+    type Ctx = (&'a EntityViews,());
 
     fn visit(&self, result: &mut Host::Primitive, ctx: &mut Self::Ctx) {
         unimplemented!()
@@ -201,6 +205,7 @@ impl Host {
             data_view: Default::default(),
             msg_reducers: Default::default(),
             future_delivery: HashMap::new(),
+            views: Default::default(),
             runtime,
         }
     }
@@ -293,6 +298,10 @@ mod stub {
         fn resize(&self, scale: (f32, f32)) -> Self {
             unimplemented!()
         }
+
+        fn blank() -> Self {
+            unimplemented!()
+        }
     }
 }
 
@@ -373,9 +382,15 @@ impl types::traits::Host for Host {
         self.data_view[&root].len()
     }
 
-    //todo: make it to work
+    //todo: first, we need to form the data for this in an update round
     fn render(&self, screen_idx: usize, by: impl FnOnce(Self::Primitive)) {
-        unimplemented!()
+        let view: &[(usize,ViewData<_>)] = &self.data_view[self.root.expect("No root entity set before render")];
+        let view = &view.iter().find(|(idx,_)| idx == screen_idx).expect("No such portal of root entity").1;
+
+        let mut primitive = Self::Primitive::blank();
+        let mut ctx = unimplemented!();
+        Visitor::visit(view,&mut primitive,&mut ctx);
+        by(primitive);
     }
     //todo: implement...
     fn resize(&mut self, screen_idx: usize, vp: Viewport) {
@@ -383,7 +398,7 @@ impl types::traits::Host for Host {
     }
 
     //TODO: think of dispatch between currently rendered components
-    fn receive_events(&mut self, events: &[Self::Event]) {
+    fn receive_events(&mut self, events: impl Iterator<Item = Self::Event>) {
         for (_, (tm, f)) in self.data.iter_mut() {
             let mut f = |ev| (f.event_dispatch)(ev, tm);
             for ev in events.iter() {
@@ -392,7 +407,7 @@ impl types::traits::Host for Host {
             }
         }
     }
-    //todo: add a tree forming
+
     fn update_round(&mut self) {
         let reducers: Vec<_> = self.msg_reducers.values().cloned().collect();
         for red in reducers {
@@ -402,6 +417,10 @@ impl types::traits::Host for Host {
         for val in delivery {
             val(&mut self.states, &mut self.data)
         };
+        let views: Vec<_> = self.views.values().cloned().collect();
+        for viewer in views {
+            viewer(&mut self.data_view,&mut self.data)
+        }
     }
 }
 
@@ -412,8 +431,75 @@ impl<S: types::traits::System<Self>> Hosts<S> for Host
             tm.get_mut::<EntityHolder<S>>().map(|data| &mut data.data)
         }).flatten()
     }
-
     fn subscribe(&mut self, who: Self::Index, with: <S as System<Self>>::Props) {
+        let view_function = move |view: &mut EntityViews,storage: &EntityStorage|{
+            let view = view.get_mut(&who).expect("ill-fromed entity data");
+
+            struct Renderer<'v>(&'v mut ViewData<Host>);
+
+            impl<'v> render::Renderer<Host> for Renderer<'v> {
+                fn anchors(&mut self) -> &[Anchor] {
+                    self.0.anchors()
+                }
+
+                fn layout(&mut self, layout: Option<Layout<Host>>, label: Anchor, z_index: ZIndex) {
+                    //trasition logic for anchors
+                    // the point is, if anchors of a entity are already attached, we simply don't show them as available to the rest of components, and vise versa
+                    match layout {
+                        Some(layout) => {
+                            if let Some(a) = self.0.anchors.iter().enumerate().find(|(a_,a)| a.0 == label.0).map(|(i,_)| i) {
+                                let anch = self.0.anchors.swap_remove(a); //should not panic
+                                let it = self.0.layouts.insert(anch,(layout,z_index));
+                                assert!(it.is_none(),"calling setting of an already set anchors")
+                            }
+                        },
+                        None => {
+                            match self.0.anchors.iter().find(|i| i.0 == label.0) {
+                                None => {
+                                    let i = self.0.layouts.remove(&label);
+                                    assert!(i.is_some(),"calling cleaning of un existent anchor")
+                                }
+                                Some(_) => unreachable!(),
+                            }
+                        }
+                    }
+                }
+
+                fn styles(&self) -> &dyn StyleTable<Host> {
+                    self.0.get_style_table()
+                }
+
+                fn patch_style_scope(&mut self, patch: &mut dyn FnMut(&mut dyn StyleTable<Host>)) {
+                    let st_table = self.0.styles.scope();
+                    patch(&mut self.0.styles);
+                    self.0.styles = st_table;
+                }
+            }
+
+            for (idx,vd) in view {
+                let mut renderer = Renderer(vd);
+                match storage.get(&who) {
+                    None => {}
+                    Some((tm,_)) => {
+                        match tm.get::<EntityHolder<S>>() {
+                            None => {}
+                            Some(sd) => {
+                                S::view(&sd.data,&mut renderer,vd.vp,*idx);
+                            }
+                        }
+                    }
+                }
+            }
+        };
+
+        match self.views.entry(who) {
+            BEntry::Vacant(mut e) => {
+                let vf = Arc::new(view_function);
+                e.insert(vf);
+            }
+            BEntry::Occupied(_) => {}
+        }
+
         let reducer: fn(&mut Host) = move |hst: &mut Host| {
             let keys = hst.data.keys().cloned().collect::<Vec<_>>();
             for wch in keys {
@@ -475,8 +561,29 @@ impl<S: types::traits::System<Self>> Hosts<S> for Host
             }
         }
 
-        let component = EntityData { data: S::changed(None, &with).unwrap(), messages: vec![] };
-        self.data.get_mut(&who).map(|(map, _)| map.insert::<EntityHolder<S>>(component));
+        match self.data.entry(who) {
+            BEntry::Vacant(mut e) => {
+                let component = EntityData { data: S::changed(None, &with).unwrap(), messages: vec![] };
+                let mut tm = typemap::TypeMap::new();
+                tm.insert::<EntityHolder<S>>(component);
+                e.insert((tm,ProcessingFunctionsEntity{ event_dispatch: Box::new(|_,_|{}) }));
+            }
+            BEntry::Occupied(mut e) => {
+                let (mut tm,_) = e.get_mut();
+                match tm.remove::<EntityHolder<S>>() {
+                    Some(mut ed) => {
+                        S::changed(Some(&mut ed.data),&with).unwrap();
+                        tm.insert::<EntityHolder<S>>(ed);
+                    },
+                    None => {
+                        let component = EntityData { data: S::changed(None, &with).unwrap(), messages: vec![] };
+                        tm.insert::<EntityHolder<S>>(component);
+                    }
+                }
+            }
+        };
+        // let component = EntityData { data: S::changed(None, &with).unwrap(), messages: vec![] };
+        // self.data.get_mut(&who).map(|(map, _)| map.insert::<EntityHolder<S>>(component));
     }
 
     fn unsubscribe(&mut self, who: Self::Index) {

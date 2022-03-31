@@ -31,7 +31,7 @@ pub trait Host {
     /// it's called when corresponding screen is resized
     fn resize(&mut self, screen_idx: usize,vp: render::Viewport);
     /// Dispatch a batch of events
-    fn receive_events(&mut self,events: &[Self::Event]);
+    fn receive_events<'a>(&'a mut self,events: impl Iterator<Item = &'a Self::Event>);
     /// Run one update round
     fn update_round(&mut self);
 
@@ -39,6 +39,7 @@ pub trait Host {
     //todo: add an interpret function for loading app state from some data structure (mb not)
 }
 
+/// This API is for working with entity's data
 pub trait View<H: Host + ?Sized> {
     fn anchors(&self) -> &[render::Anchor];
     fn set_layout(&mut self,anc: render::Anchor,filling: Option<render::Layout<H>>, z_index: render::ZIndex);
@@ -65,7 +66,7 @@ pub trait GlobalState<H: Host + ?Sized>: Sized + 'static {
     fn update(&mut self, f: impl FnOnce(Self)->Self);
 }
 
-/// bundles are done via restricting generics in systems implementation by adding `Hosts<Other System Type>`
+/// bundles are done via restricting generic `Host` in systems implementation by adding `Hosts<Other System Type>`
 pub trait System<H: Host + Hosts<Self> + ?Sized>: 'static + Unpin + Sized {
     /// inner message
     type Message: 'static + Send + Unpin;
