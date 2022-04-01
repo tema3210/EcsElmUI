@@ -25,9 +25,37 @@ impl<H: Host + ?Sized> Copy for Style<H> {}
 #[derive(Clone,Copy,Hash,Eq, PartialEq)]
 pub struct Point<T = u32>(T,T);
 
+impl<T> Point<T> {
+    pub fn absolute(x: u32,y: u32) -> Point<u32> {
+        Point(x,y)
+    }
+    pub fn relative(x: f32,y: f32) -> Point<f32>{
+        Point(x,y)
+    }
+}
+
 /// An rectangular of format (upper left corner,down right corner)
 #[derive(Clone,Copy,Hash,Eq, PartialEq)]
 pub struct Rect<L = u32,R =u32>(Point<L>,Point<R>);
+
+//todo: add methods for converting relative to absolute points
+impl<L,R> Rect<L,R> {
+    pub fn zero() -> Rect<u32,u32> {
+        Rect(Point::<u32>::absolute(0,0),Point::<u32>::absolute(0,0))
+    }
+    pub fn upper_left_absolute(self, p: Point<u32>) -> Rect<u32,R> {
+        Rect(p,self.1)
+    }
+    pub fn upper_left_relative(self, p: Point<f32>) -> Rect<f32,R> {
+        Rect(p,self.1)
+    }
+    pub fn down_right_absolute(self, p: Point<u32>) -> Rect<L,u32> {
+        Rect(self.0,p)
+    }
+    pub fn down_right_relative(self, p: Point<f32>) -> Rect<L,f32> {
+        Rect(self.0,p)
+    }
+}
 
 /// This is the type for describing level of a layout
 /// Note, actual z-index used in rendering may differ from logical one because of portals, etc.
@@ -50,22 +78,21 @@ pub enum Filling<H: Host + ?Sized> {
     Empty(<<H as Host>::Primitive as Primitive>::Color),
 }
 
-/// An Visitor for producing renderable primitives
+/// An Visitor for producing render-able primitives
 pub trait Visitor<P: Primitive> {
     /// A type for ctx of visitor
     type Ctx: Default;
 
-    fn visit(&self, result: &mut P, ctx: &mut Self::Ctx);
+    fn visit(&self, ctx: Self::Ctx) -> P;
 }
 
 /// A collection of types and methods for render necessary things
-/// todo: think of introducing physical vs logical coordinates =>  logical
 pub trait Primitive {
     type Color: Copy;
     /// Copy another primitive into a part of current one; edge cases ruled out as follows:
     /// * In case of `src` being smaller than `place` scaling up takes a place;
     /// * In case of `src` being larger than `place` `src` is first resized to fit given place
-    fn copy_from(&mut self,place: Rect,src: Self);
+    fn copy_from(&mut self,place: Rect<f32>,src: Self);
     /// Copy a part of primitive
     fn cut(&self,part: Rect) -> Self;
     /// Rescale a primitive; `scale` is FP32 vec2.
@@ -136,14 +163,6 @@ impl Anchor {
     }
     fn point(&self) -> Point {
         self.1
-    }
-}
-
-impl Deref for Anchor {
-    type Target = str;
-
-    fn deref(&self) -> &Self::Target {
-        self.0.as_ref()
     }
 }
 

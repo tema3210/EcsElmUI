@@ -26,10 +26,8 @@ pub trait Host {
     /// Get roots portal count
     fn get_root_portal_count(&self) -> usize;
     /// Function to render an entity's portal on a window
-    fn render(&self,screen_idx: usize, by: impl FnOnce(Self::Primitive))
+    fn render(&mut self,screen_idx: usize,vp: render::Viewport, by: impl FnOnce(Self::Primitive))
         where Self::EntityData: render::Visitor<Self::Primitive>;
-    /// it's called when corresponding screen is resized
-    fn resize(&mut self, screen_idx: usize,vp: render::Viewport);
     /// Dispatch a batch of events
     fn receive_events<'a>(&'a mut self,events: impl Iterator<Item = &'a Self::Event>);
     /// Run one update round
@@ -76,8 +74,8 @@ pub trait System<H: Host + Hosts<Self> + ?Sized>: 'static + Unpin + Sized {
 
     /// Properties for component initialization
     type Props;
-    /// if props has changed...
-    fn changed(this: Option<&mut Self>,props: &Self::Props) -> Option<Self>;
+    /// Initialize a component with some data
+    fn init(props: &Self::Props) -> Self;
     /// Note: Global state of the system can be accessed via a ctx
     fn update<'s,'h: 's>(&'s mut self,msg: Self::Message, ctx: &mut impl Context<'h,H>) where 'h: 's;
     /// Draw a component; viewport describes boundaries of a component, view_index is the number of view we are going to draw

@@ -27,7 +27,6 @@ use types::render::{Anchor, Viewport, StyleTable, self, Visitor, Primitive, ZInd
 type EntityStorage = BTreeMap<usize, (typemap::TypeMap, ProcessingFunctionsEntity)>;
 /// A map from entities to their view's data
 /// index -> set of portal's view data.
-/// todo: add LFU cache for primitives
 type EntityViews = BTreeMap<usize, Vec<(usize, ViewData<Host>)>>;
 
 pub struct Host {
@@ -52,23 +51,26 @@ pub struct Host {
 }
 
 pub struct ViewData<H: types::traits::Host> {
-    // a list of free anchors
+    /// a list of free anchors
     anchors: Vec<render::Anchor>,
-    // a map from anchor, to its layout, it the last is set
+    /// a map from anchor, to its layout, it the last is set
     layouts: HashMap<render::Anchor, (render::Layout<H>, render::ZIndex)>,
-    // an original size of view
+    /// an original size of view
     vp: render::Viewport,
-    // a table of styles
+    /// a table of styles
     styles: Box<dyn StyleTable<H>>,
+    /// a cache for rendered versions of self
+    view_cache: lfu::LFUCache<render::Viewport,Self::Primitive>,
 }
 
-//todo implement render logic
+
 impl<'a> types::render::Visitor<Host::Primitive> for ViewData<Host>
     where Host: 'a
 {
-    type Ctx = (&'a EntityViews,());
+    type Ctx = (&'a mut EntityViews,render::Viewport);
 
-    fn visit(&self, result: &mut Host::Primitive, ctx: &mut Self::Ctx) {
+    //todo: implement render logic
+    fn visit(&self, ctx: Self::Ctx) -> Host::Primitive {
         unimplemented!()
     }
 }
@@ -287,7 +289,7 @@ mod stub {
     impl super::render::Primitive for Primitive {
         type Color = Color;
 
-        fn copy_from(&mut self, place: Rect, src: Self) {
+        fn copy_from(&mut self, place: Rect<f32>, src: Self) {
             unimplemented!()
         }
 
@@ -382,19 +384,19 @@ impl types::traits::Host for Host {
         self.data_view[&root].len()
     }
 
-    //todo: first, we need to form the data for this in an update round
-    fn render(&self, screen_idx: usize, by: impl FnOnce(Self::Primitive)) {
+    fn render(&mut self, screen_idx: usize,vp: render::Viewport, by: impl FnOnce(Self::Primitive)) {
         let view: &[(usize,ViewData<_>)] = &self.data_view[self.root.expect("No root entity set before render")];
         let view = &view.iter().find(|(idx,_)| idx == screen_idx).expect("No such portal of root entity").1;
 
         let mut primitive = Self::Primitive::blank();
-        let mut ctx = unimplemented!();
-        Visitor::visit(view,&mut primitive,&mut ctx);
+        let mut ctx = (&mut self.data_view,vp);
+        let sc = Visitor::visit(view,ctx);
+        let copy_rect = render::Rect::zero()
+            .upper_left_relative(render::Point::relative(0.0,0.0))
+            .down_right_relative(render::Point::relative(100.0,100.0));
+
+        pritimive.copy_from(copy_rect,&sc);
         by(primitive);
-    }
-    //todo: implement...
-    fn resize(&mut self, screen_idx: usize, vp: Viewport) {
-        unimplemented!()
     }
 
     //TODO: think of dispatch between currently rendered components
