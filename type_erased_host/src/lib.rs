@@ -21,7 +21,8 @@ use std::pin::Pin;
 use winit::event::VirtualKeyCode::Wake;
 use std::sync::Arc;
 use std::path::Path;
-use types::render::{Anchor, Viewport, StyleTable, self, Visitor, Primitive, ZIndex, Layout};
+use types::render::{Anchor, Viewport, StyleTable, self, Visitor, Primitive, ZIndex, Layout, Filling};
+use std::cell::RefCell;
 
 /// A map from entities to their components data
 type EntityStorage = BTreeMap<usize, (typemap::TypeMap, ProcessingFunctionsEntity)>;
@@ -53,14 +54,15 @@ pub struct Host {
 pub struct ViewData<H: types::traits::Host> {
     /// a list of free anchors
     anchors: Vec<render::Anchor>,
+    z_index_range: std::ops::Range<isize>,
     /// a map from anchor, to its layout, it the last is set
-    layouts: HashMap<render::Anchor, (render::Layout<H>, render::ZIndex)>,
+    layouts: HashMap<render::Anchor, (render::Layout<H>, isize)>,
     /// an original size of view
     vp: render::Viewport,
     /// a table of styles
     styles: Box<dyn StyleTable<H>>,
-    /// a cache for rendered versions of self
-    view_cache: lfu::LFUCache<render::Viewport,Self::Primitive>,
+    /// a cache for rendered versions of self todo: clean it somewhere + pick right capacity
+    view_cache: RefCell<lfu::LFUCache<render::Viewport,Self::Primitive>>,
 }
 
 
@@ -69,9 +71,69 @@ impl<'a> types::render::Visitor<Host::Primitive> for ViewData<Host>
 {
     type Ctx = (&'a mut EntityViews,render::Viewport);
 
-    //todo: implement render logic
+    //todo: implement render logic (caching?)
     fn visit(&self, ctx: Self::Ctx) -> Host::Primitive {
-        unimplemented!()
+
+        if let Some(val) = self.view_cache.borrow_mut().get(&ctx.1) {
+            // return Clone of the primitive todo: maybe optimize
+            let mut frame = Host::Primitive::blank(ctx.1);
+            frame.copy_from(Rect::full_box(),val);
+            return frame;
+        };
+
+        let screen_rect = render::Rect::zero()
+            .upper_left_relative(render::Point::relative(0.,0.))
+            .down_right_relative(render::Point::relative(100.,100.));
+        let screen_rect_absolute = render::Rect::zero().down_right_absolute(ctx.vp.as_point());
+        let mut primitive_ret = Host::Primitive::blank(ctx.vp);
+
+        let mut layouts_sorted: Vec<_> = self.layouts.values().map(|(l,i)| (*i,l)).collect();
+        layouts_sorted.sort_unstable_by(|el,el2| el.0.cmp(&el2.0));
+
+        //previous z-index
+        let mut prev_layer = layouts_sorted[0].0;
+        //primitive of current z-index
+        let mut prim = Host::Primitive::blank(ctx.vp);
+        //sanity?
+        let mut layouts_sorted = layouts_sorted.into_iter().peekable();
+
+        for (layer,layout) in layouts_sorted {
+            // if z-index of the current layout is bigger than one from previous iterations
+            // we dump the layer data onto current entity texture and clear the current layers buffer
+            if *layer > prev_layer {
+                prev_layer +=1;
+                primitive_ret.copy_from(screen_rect,&prim);
+                prim = Host::Primitive::blank(ctx.vp);
+            };
+            // rect for current layout
+            let dest = screen_rect_absolute.get_absolute_rect(layout.dims);
+            // its viewport
+            let sub_vp = dest.get_viewport();
+            // primitive for current layer
+            let mut l_rimitive = Host::Primitive::blank(sub_vp);
+
+            //todo: implement overlapping check
+            for (rect, data) in layout.parts {
+                match data {
+                    Filling::Component(ind, portal) => {
+                        let handle: Option<&ViewData<Host>> = ctx.0.get(&ind).iter().find(|(i,_)| **i == portal).map(|(_,d)|d );
+                        let data = handle.expect("No view data for required index {ind:?}");
+                        //get primitive
+                        let primitive = data.visit((ctx.0,sub_vp));
+                        l_primitive.copy_from(rect,&primitive);
+                    }
+                    Filling::Data(primitive) => {
+                        l_rimitive.copy_from(rect,&primitive)
+                    }
+                }
+            }
+            if layouts_sorted.peek().is_none() {
+                primitive_ret.copy_from(screen_rect,&prim);
+            }
+
+        };
+        //result
+        primitive_ret
     }
 }
 
@@ -83,7 +145,8 @@ impl<H: types::traits::Host + 'static> types::traits::View<H> for ViewData<H> {
     fn set_layout(&mut self, anc: Anchor, filling: Option<render::Layout<H>>, z_index: render::ZIndex) {
         if self.anchors.iter().find(|&i| i.0 == anc.0).is_some() {
             if let Some(filling) = filling {
-                self.layouts.insert(anc, (filling, z_index));
+                //todo: Process the error here properly
+                self.layouts.insert(anc, (filling, z_index.normalize(&mut self.z_index_range).expect("Bad z-index chosen")));
             } else {
                 self.layouts.remove(&anc);
             }
@@ -289,7 +352,7 @@ mod stub {
     impl super::render::Primitive for Primitive {
         type Color = Color;
 
-        fn copy_from(&mut self, place: Rect<f32>, src: Self) {
+        fn copy_from(&mut self, place: Rect<f32,f32>, src: &Self) {
             unimplemented!()
         }
 
@@ -301,7 +364,7 @@ mod stub {
             unimplemented!()
         }
 
-        fn blank() -> Self {
+        fn blank(size: super::render::Viewport) -> Self {
             unimplemented!()
         }
     }
@@ -451,7 +514,8 @@ impl<S: types::traits::System<Self>> Hosts<S> for Host
                         Some(layout) => {
                             if let Some(a) = self.0.anchors.iter().enumerate().find(|(a_,a)| a.0 == label.0).map(|(i,_)| i) {
                                 let anch = self.0.anchors.swap_remove(a); //should not panic
-                                let it = self.0.layouts.insert(anch,(layout,z_index));
+                                //todo: finish
+                                let it = self.0.layouts.insert(anch,(layout,z_index.normalize(&mut self.0.z_index_range).expect("Msg")));
                                 assert!(it.is_none(),"calling setting of an already set anchors")
                             }
                         },
